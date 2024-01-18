@@ -1,0 +1,6 @@
+- Copy in executable -- done
+- Copy in settings.ini ? Template? -- template copied in, might need some work
+- Copy in default fuel lookup ? -- nah, build it like for prometheus
+- What's the deal with the default fuel crosswalk csv? -- really unhelpful, but w/e
+- Update xml -- done?
+- Update script
