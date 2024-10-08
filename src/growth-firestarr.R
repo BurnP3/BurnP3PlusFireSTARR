@@ -372,6 +372,19 @@ rowColFromLatLong <- function(x, lat, long) {
   return(rowCols)
 }
 
+# Function to assign crs from a template to an object and return object
+alignOutputs <- function(x, template) {
+  # FireSTARR overwrites crs, but does not reproject
+  # - Assign it back to the template CRS
+  crs(x) <- crs(template)
+  x %>%
+    crop(template) %>%
+    extend(template) %>%
+    is.na %>% # FireStarr returns NA instead of zero
+    `!` %>%   # inverts the is.na
+    return()
+}
+
 # Get burn area from output csv
 getBurnArea <- function(inputFile) {
   # Handle failed burns
@@ -386,6 +399,7 @@ getBurnArea <- function(inputFile) {
   # Read and return size in hectares
   fread(sizeFile) %>%
     pull %>%
+    tail(1) %>%
     return
 }
 
@@ -489,7 +503,7 @@ runBatch <- function(batchInputs) {
   
   # Get burn areas
   burnAreas <- getBurnAreas(rawOutputGridPaths)
-  
+
   # Convert and save spatial outputs as needed
   batchOutput <- batchInputs %>%
     select(Iteration, FireID, Season) %>%
@@ -579,6 +593,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
     for(i in seq_along(UniqueFireIDs)){
       if(!is.na(UniqueFireIDs[i]) & !is.na(burnGrids[UniqueFireIDs[i]]) ){
         rast(burnGrids[UniqueFireIDs[i]]) %>% 
+          alignOutputs(fuelsRaster) %>%
           mask(fuelsRaster) %>%
           writeRaster(str_c(allPerimOutputFolder, "/it", Iteration,"_fire_", FireIDs[i], ".tif"), 
               overwrite = T,
@@ -590,7 +605,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
     }
     return()
   }
-
+  
   # initialize empty matrix
   accumulator <- rast(fuelsRaster, vals = 0)
 
@@ -609,16 +624,15 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
     if(!is.na(UniqueFireIDs[i]) & !is.na(burnGrids[UniqueFireIDs[i]]) ){
       # Read in and add current burn map
       burnArea <- rast(burnGrids[UniqueFireIDs[i]]) %>%
-        is.na %>% # FireStarr returns NA instead of zero
-        `!` %>%   # inverts the is.na
-        terra::extend(fuelsRaster, fill = 0)
-      accumulator <- accumulator + burnArea
+        alignOutputs(fuelsRaster)
+        
+      accumulator <- sum(accumulator, burnArea, na.rm = T)
       
       # Add to seasonal accumulator
       if(saveSeasonalBurnMaps) {
         thisSeason <- Seasons[i]
         if (thisSeason %in% seasonValues)
-          seasonalAccumulators[[thisSeason]] <- seasonalAccumulators[[thisSeason]] + burnArea
+          seasonalAccumulators[[thisSeason]] <- sum(seasonalAccumulators[[thisSeason]], burnArea, na.rm = T)
       }
       
       if(OutputOptionsSpatial$AllPerim == T){
