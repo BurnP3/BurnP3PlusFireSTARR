@@ -18,12 +18,12 @@ checkPackageVersion <- function(packageString, minimumVersion){
   }
 }
 
-checkPackageVersion("rsyncrosim", "1.4.8")
+checkPackageVersion("rsyncrosim", "1.5.0")
 checkPackageVersion("tidyverse",  "2.0.0")
 checkPackageVersion("terra",      "1.5.21")
-checkPackageVersion("dplyr",      "1.1.2")
-checkPackageVersion("codetools",  "0.2.19")
-checkPackageVersion("data.table", "1.14.8")
+checkPackageVersion("dplyr",      "1.1.4")
+checkPackageVersion("codetools",  "0.2.20")
+checkPackageVersion("data.table", "1.16.0")
 
 # Setup ----
 progressBar(type = "message", message = "Preparing inputs...")
@@ -127,8 +127,10 @@ if(nrow(FuelLoad) != 0) {
 ## Check raster inputs for consistency ----
 
 # Ensure fuels crs can be converted to Lat / Long
-if(fuelsRaster %>% is.lonlat){stop("Incorrect coordinate system. Projected coordinate system required, please reproject your grids.")}
-tryCatch(fuelsRaster %>% project("EPSG:4326"), error = function(e) stop("Error parsing provided Fuels map. Cannot calculate Latitude and Longitude from provided Fuels map, please check CRS."))
+test.point <- vect(matrix(crds(fuelsRaster)[1,],ncol=2), crs = crs(fuelsRaster))
+# Ensure fuels crs can be converted to Lat / Long
+if(test.point %>% is.lonlat){stop("Incorrect coordinate system. Projected coordinate system required, please reproject your grids.")}
+tryCatch(test.point %>% project("epsg:4326"), error = function(e) stop("Error parsing provided Fuels map. Cannot calculate Latitude and Longitude from provided Fuels map, please check CRS."))
 
 # Define function to check input raster for consistency
 checkSpatialInput <- function(x, name, checkProjection = T, warnOnly = F) {
@@ -816,7 +818,7 @@ if(saveBurnMaps) {
   
   # Output if there are records to save
   if(nrow(OutputBurnMap) > 0)
-    saveDatasheet(myScenario, OutputBurnMap, "burnP3Plus_OutputBurnMap", append = T)
+    saveDatasheet(myScenario, OutputBurnMap, "burnP3Plus_OutputBurnMap")
   
   updateRunLog("Finished accumulating burn maps in ", updateBreakpoint())
 }
@@ -837,7 +839,7 @@ if(OutputOptionsSpatial$AllPerim | (saveBurnMaps & minimumFireSize > 0)){
   
   # Output if there are records to save
   if(nrow(OutputAllPerim) > 0)
-    saveDatasheet(myScenario, OutputAllPerim, "burnP3Plus_OutputAllPerim", append = T)
+    saveDatasheet(myScenario, OutputAllPerim, "burnP3Plus_OutputAllPerim")
   
   updateRunLog("Finished individual burn maps in ", updateBreakpoint())
 }
