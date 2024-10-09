@@ -66,6 +66,18 @@ elevationRaster <- tryCatch(
   rast(datasheet(myScenario, "burnP3Plus_LandscapeRasters")[["ElevationGridFileName"]]),
   error = function(e) NULL)
 
+# FireSTARR requires raster width and heigh to be divisible by 16 and sets border pixels to be Non-fuel
+# - To handle this, we need to pad rasters by at least one pixel and enough to be divisble by 16
+# - Floor and ceiling are used to handle cases where an odd number of pixels need to be added
+# - Also note that adding a positive integer to xmin / ymin unintuitively decreases these values (ie makes the extent larger)
+pad_cols <- 16 - ((ncol(fuelsRaster) + 1) %% 16) + 1
+pad_rows <- 16 - ((nrow(fuelsRaster) + 1) %% 16) + 1
+padded_extent <- ext(fuelsRaster) + 
+  c(xmin =  abs(  floor(pad_cols / 2) * xres(fuelsRaster)),
+    xmax =  abs(ceiling(pad_cols / 2) * xres(fuelsRaster)),
+    ymin =  abs(  floor(pad_rows / 2) * yres(fuelsRaster)),
+    ymax =  abs(ceiling(pad_rows / 2) * yres(fuelsRaster)))
+
 ## Handle empty values ----
 if(nrow(FuelTypeCrosswalk) == 0) {
   updateRunLog("No fuels code crosswalk found! Using default crosswalk for Canadian Forest Service fuel codes.", type = "warning")
@@ -367,7 +379,7 @@ rowColFromLatLong <- function(x, lat, long) {
   rowCols <- rowColFromCell(x, cellIDs)
 
   # FireStarr counts rows from the bottom and both metrics must be 0 indexed
-  rowCols[,1] <- nrow(fuelsRaster) - rowCols[,1]
+  rowCols[,1] <- nrow(x) - rowCols[,1]
   rowCols[,2] <- rowCols[,2] - 1
   return(rowCols)
 }
@@ -460,7 +472,7 @@ runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, IgnRow, IgnC
             "--ffmc", FFMC,
             "--dmc", DMC,
             "--dc", DC,
-            "--output_date_offsets", str_c("{", numDays, "}"),
+            "--output_date_offsets", str_c("[", numDays, "]"),
             "-s --occurrence --no-intensity --no-probability --deterministic --force-fuel --rowcol-ignition",
             "--ign-row", IgnRow,
             "--ign-col", IgnColumn,
@@ -687,8 +699,14 @@ updateRunLog("Finished parsing run inputs in ", updateBreakpoint())
 
 # Spatial data
 dir.create(dirname(fuelsRasterFile), showWarnings = F, recursive = T)
-writeRaster(fuelsRaster, fuelsRasterFile, overwrite = T, datatype = "INT2S", NAflag = -9999, gdal=c("TILED=YES"))
-writeRaster(elevationRaster, elevationRasterFile, overwrite = T, datatype = "INT2S", NAflag = -9999, gdal=c("TILED=YES"))
+
+# FireSTARR assigns all border pixels to non-fuels, so we pad all inputs around by 1 pixel
+fuelsRaster %>%
+  extend(padded_extent) %>%
+  writeRaster(fuelsRasterFile, overwrite = T, datatype = "INT2S", NAflag = -9999, gdal=c("TILED=YES"))
+elevationRaster %>%
+  extend(padded_extent) %>%
+  writeRaster(elevationRasterFile, overwrite = T, datatype = "INT2S", NAflag = -9999, gdal=c("TILED=YES"))
 
 # Reformat fuel lookup table
 FuelType %>%
@@ -703,10 +721,11 @@ FuelType %>%
   write_csv(fuelLookupFile, escape = "none")
 
 # Calculate ignition location in grid row and column
+# - Ignition row and col must be calculated from a padded fuels raster as we pad the inputs we provide to FireSTARR
 ignitionLocation <- DeterministicIgnitionLocation %>%
   mutate(
-    IgnRow    = rowColFromLatLong(fuelsRaster, Latitude, Longitude)[,1],
-    IgnColumn = rowColFromLatLong(fuelsRaster, Latitude, Longitude)[,2]) %>%
+    IgnRow    = rowColFromLatLong(fuelsRaster %>% extend(padded_extent), Latitude, Longitude)[,1],
+    IgnColumn = rowColFromLatLong(fuelsRaster %>% extend(padded_extent), Latitude, Longitude)[,2]) %>%
   dplyr::select("Iteration","FireID","IgnColumn","IgnRow","Latitude","Longitude","Season") %>%
   arrange("Iteration", "FireID")
 
