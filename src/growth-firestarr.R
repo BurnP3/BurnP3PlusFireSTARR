@@ -124,12 +124,14 @@ if(nrow(WindGrid) != 0) {
   updateRunLog("FireSTARR currently does not support Wind Grids. Wind Grid options ignored.", type = "warning")
 }
 
-if(nrow(GreenUp) != 0) {
-  updateRunLog("FireSTARR transformer currently does not support Green Up. Green Up options ignored.", type = "warning")
-}
+if (nrow(GreenUp) == 0) {
+  GreenUp[1, ] <- c(NA, TRUE)
+  saveDatasheet(myScenario, GreenUp, "burnP3Plus_GreenUp")
+} else if (is.character(GreenUp$GreenUp)) GreenUp$GreenUp <- GreenUp$GreenUp != "No"
 
-if(nrow(Curing) != 0) {
-  updateRunLog("FireSTARR transformer currently does not support manually specifying Curing.", type = "warning")
+if (nrow(Curing) == 0) {
+  Curing[1, ] <- c(NA, 75L)
+  saveDatasheet(myScenario, Curing, "burnP3Plus_Curing")
 }
 
 if(nrow(FuelLoad) != 0) {
@@ -460,7 +462,7 @@ processOutputs <- function(batchOutput, rawOutputGridPaths) {
 }
 
 # Function to call FireSTARR on the (global) parameter file
-runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, IgnRow, IgnColumn, numDays, DC, DMC, FFMC, ...) {
+runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, IgnRow, IgnColumn, numDays, Curing, GreenUp, DC, DMC, FFMC, ...) {
   outputFolder <- file.path(gridOutputFolder, str_pad(UniqueBatchFireIndex, 5, pad="0"))
   dir.create(outputFolder, showWarnings = F)
   
@@ -473,7 +475,9 @@ runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, IgnRow, IgnC
             "--dmc", DMC,
             "--dc", DC,
             "--output_date_offsets", str_c("[", numDays, "]"),
-            "-s --occurrence --no-intensity --no-probability --deterministic --force-fuel --rowcol-ignition",
+            "-s --occurrence --no-intensity --no-probability --deterministic --force-fuel --rowcol-ignition --force-curing",
+            "--curing", Curing,
+            if(GreenUp) "--force-greenup" else "--force-no-greenup",
             "--ign-row", IgnRow,
             "--ign-col", IgnColumn,
             "--wx", str_c(weatherFolder, "/weather", UniqueBatchFireIndex, ".csv")))
@@ -736,7 +740,23 @@ fireGrowthInputs <- DeterministicBurnCondition %>%
   
   # Add ignition location information
   left_join(ignitionLocation, c("Iteration", "FireID")) %>%
-  
+
+  # Calculate and append curing and greenup values as columns
+  mutate(
+    Curing = map_int(Season, function(season)
+      Curing %>%
+        filter(Season %in% c(season, NA)) %>%
+        arrange(Season) %>%
+        pull(Curing) %>%
+        pluck(1)),
+
+    GreenUp = map_lgl(Season, function(season)
+      GreenUp %>%
+        filter(Season %in% c(season, NA)) %>%
+        arrange(Season) %>% pull(GreenUp) %>%
+        pluck(1))
+    ) %>%
+
   # Split extra ignitions into reasonable batch sizes
   mutate(extraIgnitionsBatch = (row_number() - 1) %/% batchSize + 1, 
          extraIgnitionsBatch = ifelse(Iteration == 0, extraIgnitionsBatch, 0)) %>%
