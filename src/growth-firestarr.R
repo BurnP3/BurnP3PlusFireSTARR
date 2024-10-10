@@ -18,7 +18,7 @@ checkPackageVersion <- function(packageString, minimumVersion){
   }
 }
 
-checkPackageVersion("rsyncrosim", "1.5.0")
+checkPackageVersion("rsyncrosim", "2.0.0")
 checkPackageVersion("tidyverse",  "2.0.0")
 checkPackageVersion("terra",      "1.5.21")
 checkPackageVersion("dplyr",      "1.1.4")
@@ -60,6 +60,17 @@ FuelLoad <- datasheet(myScenario, "burnP3Plus_FuelLoad", lookupsAsFactors = F, o
 OutputOptions <- datasheet(myScenario, "burnP3Plus_OutputOption", optional = T)
 OutputOptionsSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionSpatial", optional = T)
 
+# Create function to test if datasheets are empty
+isDatasheetEmpty <- function(ds){
+  if (nrow(ds) == 0) {
+    return(TRUE)
+  }
+  if (all(is.na(ds))) {
+    return(TRUE)
+  }
+  return(FALSE)
+}
+
 # Import relevant rasters, allowing for missing elevation
 fuelsRaster <- rast(datasheet(myScenario, "burnP3Plus_LandscapeRasters")[["FuelGridFileName"]])
 elevationRaster <- tryCatch(
@@ -79,13 +90,13 @@ padded_extent <- ext(fuelsRaster) +
     ymax =  abs(ceiling(pad_rows / 2) * yres(fuelsRaster)))
 
 ## Handle empty values ----
-if(nrow(FuelTypeCrosswalk) == 0) {
+if(isDatasheetEmpty(FuelTypeCrosswalk)) {
   updateRunLog("No fuels code crosswalk found! Using default crosswalk for Canadian Forest Service fuel codes.", type = "warning")
   FuelTypeCrosswalk <- fread(file.path(ssimEnvironment()$PackageDirectory, "Default Fuel Crosswalk.csv"))
   saveDatasheet(myScenario, as.data.frame(FuelTypeCrosswalk), "burnP3PlusFireSTARR_FuelCodeCrosswalk")
 }
 
-if(nrow(OutputOptions) == 0) {
+if(isDatasheetEmpty(OutputOptions)) {
   updateRunLog("No tabular output options chosen. Defaulting to keeping all tabular outputs.", type = "info")
   OutputOptions[1,] <- rep(TRUE, length(OutputOptions[1,]))
   saveDatasheet(myScenario, OutputOptions, "burnP3Plus_OutputOption")
@@ -96,7 +107,7 @@ if(nrow(OutputOptions) == 0) {
   saveDatasheet(myScenario, OutputOptions, "burnP3Plus_OutputOption")
 }
 
-if(nrow(OutputOptionsSpatial) == 0) {
+if(isDatasheetEmpty(OutputOptionsSpatial)) {
   updateRunLog("No spatial output options chosen. Defaulting to keeping all spatial outputs.", type = "info")
   OutputOptionsSpatial[1,] <- rep(TRUE, length(OutputOptionsSpatial[1,]))
   saveDatasheet(myScenario, OutputOptionsSpatial, "burnP3Plus_OutputOptionSpatial")
@@ -107,34 +118,34 @@ if(nrow(OutputOptionsSpatial) == 0) {
   saveDatasheet(myScenario, OutputOptionsSpatial, "burnP3Plus_OutputOptionSpatial")
 }
 
-if(nrow(BatchOption) == 0) {
+if(isDatasheetEmpty(BatchOption)) {
   updateRunLog("No batch size chosen. Defaulting to batches of 250 iterations.", type = "info")
   BatchOption[1,] <- c(250)
   saveDatasheet(myScenario, BatchOption, "burnP3Plus_BatchOption")
 }
 
-if(nrow(ResampleOption) == 0) {
+if(isDatasheetEmpty(ResampleOption)) {
   updateRunLog("No Minimum Fire Size chosen.\nDefaulting to a Minimum Fire Size of 1ha.\nPlease see the Fire Resampling Options table for more details.", type = "info")
   ResampleOption[1,] <- c(1,0)
   saveDatasheet(myScenario, ResampleOption, "burnP3Plus_FireResampleOption")
 }
 
 # Handle unsupported inputs
-if(nrow(WindGrid) != 0) {
+if(!isDatasheetEmpty(WindGrid)) {
   updateRunLog("FireSTARR currently does not support Wind Grids. Wind Grid options ignored.", type = "warning")
 }
 
-if (nrow(GreenUp) == 0) {
+if (isDatasheetEmpty(GreenUp)) {
   GreenUp[1, ] <- c(NA, TRUE)
   saveDatasheet(myScenario, GreenUp, "burnP3Plus_GreenUp")
 } else if (is.character(GreenUp$GreenUp)) GreenUp$GreenUp <- GreenUp$GreenUp != "No"
 
-if (nrow(Curing) == 0) {
+if (isDatasheetEmpty(Curing)) {
   Curing[1, ] <- c(NA, 75L)
   saveDatasheet(myScenario, Curing, "burnP3Plus_Curing")
 }
 
-if(nrow(FuelLoad) != 0) {
+if(!isDatasheetEmpty(FuelLoad)) {
   updateRunLog("FireSTARR transformer currently does not support manually specifying Fuel Loading.", type = "warning")
 }
 
@@ -190,7 +201,7 @@ getRunContext <- function() {
   isParallel <- libraryPath %>%
     str_split("/|(\\\\)") %>%
     pluck(1) %>%
-    str_detect("Parallel") %>%
+    str_detect("MultiProc") %>%
     any %>%
     `&`(str_detect(libraryName, "Job-\\d"))
 
@@ -239,7 +250,7 @@ saveSeasonalBurnMaps <- any(OutputOptionsSpatial$SeasonalBurnMap,
 minimumFireSize <- ResampleOption$MinimumFireSize
 
 # Combine fuel type definitions with codes if provided
-if(nrow(FuelTypeCrosswalk) > 0) {
+if(!isDatasheetEmpty(FuelTypeCrosswalk)) {
   FuelType <- FuelType %>%
     left_join(FuelTypeCrosswalk, by = c("Name" = "FuelType"))
 } else
@@ -476,6 +487,7 @@ runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, IgnRow, IgnC
             "--dc", DC,
             "--output_date_offsets", str_c("[", numDays, "]"),
             "-s --occurrence --no-intensity --no-probability --deterministic --force-fuel --rowcol-ignition --force-curing",
+            "-q -q -q -q", # Reduce output level multiple times for silent output
             "--curing", Curing,
             if(GreenUp) "--force-greenup" else "--force-no-greenup",
             "--ign-row", IgnRow,
@@ -686,7 +698,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
       # Mask and save as raster
       seasonalAccumulators[[season]] %>%
         mask(fuelsRaster) %>%
-        writeRaster(str_c(seasonalAccumulatorOutputFolder, "/it", Iteration, "-sn", lookup(season, SeasonTable$Name, SeasonTable$SeasonID), ".tif"), 
+        writeRaster(str_c(seasonalAccumulatorOutputFolder, "/it", Iteration, "-sn", lookup(season, SeasonTable$Name, SeasonTable$SeasonId), ".tif"), 
                     overwrite = T,
                     NAflag = -9999,
                     wopt = list(filetype = "GTiff",
@@ -834,7 +846,7 @@ if(OutputOptions$FireStatistics | minimumFireSize > 0) {
       as.data.frame()
       
     # Output if there are records to save
-    if(nrow(OutputFireStatistic) > 0)
+    if(!isDatasheetEmpty(OutputFireStatistic))
       saveDatasheet(myScenario, OutputFireStatistic, "burnP3Plus_OutputFireStatistic", append = T)
   
   updateRunLog("Finished collecting fire statistics in ", updateBreakpoint())
@@ -864,13 +876,13 @@ if(saveBurnMaps) {
           Timestep = 0,
           Season = str_extract(FileName, "\\d+.tif") %>% str_sub(end = -5) %>% as.integer()) %>%
         mutate(
-          Season = lookup(Season, SeasonTable$SeasonID, SeasonTable$Name)) %>%
+          Season = lookup(Season, SeasonTable$SeasonId, SeasonTable$Name)) %>%
         filter(Iteration %in% iterations)) %>%
       as.data.frame
   }
   
   # Output if there are records to save
-  if(nrow(OutputBurnMap) > 0)
+  if(!isDatasheetEmpty(OutputBurnMap))
     saveDatasheet(myScenario, OutputBurnMap, "burnP3Plus_OutputBurnMap")
   
   updateRunLog("Finished accumulating burn maps in ", updateBreakpoint())
@@ -891,7 +903,7 @@ if(OutputOptionsSpatial$AllPerim | (saveBurnMaps & minimumFireSize > 0)){
     as.data.frame
   
   # Output if there are records to save
-  if(nrow(OutputAllPerim) > 0)
+  if(!isDatasheetEmpty(OutputAllPerim))
     saveDatasheet(myScenario, OutputAllPerim, "burnP3Plus_OutputAllPerim")
   
   updateRunLog("Finished individual burn maps in ", updateBreakpoint())
