@@ -151,6 +151,38 @@
 		<validation validationType="Unique" columns="FuelType"/>
 	</dataSheet>
 
+  	<!--Scenario Datasheets-->
+
+	<dataSheet name="OutputOptionSpatial" displayName="Secondary Outputs" isSingleRow="True">
+		<column name="RateOfSpread" dataType="Boolean" displayName="Rate of Spread Map"/>
+		<column name="FireIntensity" dataType="Boolean" displayName="Fire Intensity Map"/>
+		<column name="SpreadDirection" dataType="Boolean" displayName="Spread Direction Map"/>
+	</dataSheet>
+
+  <dataSheet name="OutputRateOfSpreadMap" displayName="Output Rate of Spread Map">
+		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="Greater" formula1="0" format="d"/>
+		<column name="Timestep" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d" isVisible="False"/>
+		<column name="FireID" dataType="Integer"/>
+		<column name="FileName" displayName="Rate of Spread Map" dataType="String" allowDbNull="False" isExternalFile="True" isRaster="True" bandColumn="Band" filenameCode="RateOfSpread"/>
+		<column name="Band" displayName="Band" dataType="Integer" allowDbNull="True" isOptional="True"/>
+	</dataSheet>
+
+	<dataSheet name="OutputFireIntensityMap" displayName="Output Rate of Spread Map">
+		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="Greater" formula1="0" format="d"/>
+		<column name="Timestep" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d" isVisible="False"/>
+		<column name="FireID" dataType="Integer"/>
+		<column name="FileName" displayName="Fire Intensity Map" dataType="String" allowDbNull="False" isExternalFile="True" isRaster="True" bandColumn="Band" filenameCode="FireIntensity"/>
+		<column name="Band" displayName="Band" dataType="Integer" allowDbNull="True" isOptional="True"/>
+	</dataSheet>
+
+  <dataSheet name="OutputSpreadDirectionMap" displayName="Output Spread Direction Map">
+		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="Greater" formula1="0" format="d"/>
+		<column name="Timestep" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d" isVisible="False"/>
+		<column name="FireID" dataType="Integer"/>
+		<column name="FileName" displayName="Spread Direction Map" dataType="String" allowDbNull="False" isExternalFile="True" isRaster="True" bandColumn="Band" filenameCode="SpreadDirection"/>
+		<column name="Band" displayName="Band" dataType="Integer" allowDbNull="True" isOptional="True"/>
+	</dataSheet>
+
 	<!--Transformers-->
 
 	<!--Fire Growth FireSTARR Transformer-->
@@ -171,13 +203,45 @@
 		<dataSheet name="burnP3Plus_OutputBurnMap" type="Output"/>
 		<dataSheet name="burnP3Plus_OutputFirePerimeter" type="Output"/>
 		<dataSheet name="burnP3Plus_OutputAllPerim" type="Output"/>
+		<dataSheet name="OutputOptionSpatial" type="Input"/>
+		<dataSheet name="OutputRateOfSpreadMap" type="Output"/>
+		<dataSheet name="OutputFireIntensityMap" type="Output"/>
+		<dataSheet name="OutputSpreadDirectionMap" type="Output"/>
 	</transformer>
 
+  <!--Export Transformers-->
+	<transformer name="RateOfSpreadMap" displayName="Rate of Spread Map by Iteration and Fire ID" isExport="True" dataSheet="OutputRateOfSpreadMap" column="FileName" isFolderExport="True"/>
+	<transformer name="FireIntensityMap" displayName="Fire Intensity Map by Iteration and Fire ID" isExport="True" dataSheet="OutputFireIntensityMap" column="FileName" isFolderExport="True"/>
+	<transformer name="SpreadDirectionMap" displayName="Spread Direction Map by Iteration and Fire ID" isExport="True" dataSheet="OutputSpreadDirectionMap" column="FileName" isFolderExport="True"/>
+	
 	<!--Layouts-->
+
+  <!--Results Transformer Layout-->
+	<layout type="Export">
+		<group name="Export" displayName="FireSTARR">
+			<item name="RateOfSpreadMap" displayName="Rate of Spread Maps"/>
+			<item name="FireIntensityMap" displayName="Fire Intensity Maps"/>
+			<item name="SpreadDirectionMap" displayName="Spread Direction Maps"/>
+		</group>
+	</layout>
+
+  <!--Map Layout-->
+	<layout type="Map">
+		<group name="FirestarrSecondaryOutputs" displayName="FireSTARR Secondary Outputs">
+			<item name="ros" displayName="Rate of Spread" dataSheet="OutputRateOfSpreadMap" column="FileName"/>
+			<item name="fi" displayName="Fire Intensity" dataSheet="OutputFireIntensityMap" column="FileName"/>
+      <item name="sd" displayName="Spread Direction" dataSheet="OutputSpreadDirectionMap" column="FileName"/>
+		</group>
+	</layout>
 
 	<!--Project Layout-->
 	<layout type="Project">
 		<item name="FuelCodeCrosswalk" displayName="FireSTARR Crosswalk"/>
+	</layout>
+
+  <!--Scenario Layout-->
+	<layout type="Scenario">
+		<item name="OutputOptionSpatial" displayName="Output Options" showIf="inPipeline"/>
 	</layout>
 
 </package>

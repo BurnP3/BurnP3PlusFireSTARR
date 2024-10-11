@@ -59,6 +59,7 @@ Curing <- datasheet(myScenario, "burnP3Plus_Curing", lookupsAsFactors = F, optio
 FuelLoad <- datasheet(myScenario, "burnP3Plus_FuelLoad", lookupsAsFactors = F, optional = T)
 OutputOptions <- datasheet(myScenario, "burnP3Plus_OutputOption", optional = T)
 OutputOptionsSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionSpatial", optional = T)
+OutputOptionsSpatialFireSTARR <- datasheet(myScenario, "burnP3PlusFireSTARR_OutputOptionSpatial", optional = T)
 
 # Create function to test if datasheets are empty
 isDatasheetEmpty <- function(ds){
@@ -116,6 +117,12 @@ if(isDatasheetEmpty(OutputOptionsSpatial)) {
   OutputOptionsSpatial <- OutputOptionsSpatial %>%
     replace(is.na(.), TRUE)
   saveDatasheet(myScenario, OutputOptionsSpatial, "burnP3Plus_OutputOptionSpatial")
+}
+
+if (isDatasheetEmpty(OutputOptionsSpatialFireSTARR)) {
+  updateRunLog("No FireSTARR-specific spatial output options chosen. Defaulting to keeping no secondary spatial outputs.", type = "info")
+  OutputOptionsSpatialFireSTARR[1, ] <- rep(FALSE, length(OutputOptionsSpatialFireSTARR[1, ]))
+  saveDatasheet(myScenario, OutputOptionsSpatialFireSTARR, "burnP3PlusFireSTARR_OutputOptionSpatial")
 }
 
 if(isDatasheetEmpty(BatchOption)) {
@@ -181,6 +188,13 @@ checkSpatialInput <- function(x, name, checkProjection = T, warnOnly = F) {
 
 # Check optional inputs
 checkSpatialInput(elevationRaster, "Elevation")
+
+## Set constants ----
+
+# Names and output file suffixes of FireSTARR-specific secondary outputs
+outputComponentNames <- c("RateOfSpread", "FireIntensity", "SpreadDirection")
+outputComponentRawSuffix <- c("_ros", "_", "_raz") # Note that intensity outputs just end in "_.tif"
+outputComponentCleanSuffix <- c("ros", "fi", "raz")
 
 ## Extract relevant parameters ----
 
@@ -317,13 +331,16 @@ gridOutputFolder <- "firestarr-outputs"
 accumulatorOutputFolder <- "firestarr-accumulator"
 seasonalAccumulatorOutputFolder <- "firestarr-accumulator-seasonal"
 allPerimOutputFolder <- "firestarr-allperim"
+secondaryOutputFolder <- "firestarr-secondary"
 unlink(gridOutputFolder, recursive = T, force = T)
 unlink(accumulatorOutputFolder, recursive = T, force = T)
 unlink(allPerimOutputFolder, recursive = T, force = T)
+unlink(secondaryOutputFolder, recursive = T, force = T)
 dir.create(gridOutputFolder, showWarnings = F)
 dir.create(accumulatorOutputFolder, showWarnings = F)
 dir.create(seasonalAccumulatorOutputFolder, showWarnings = F)
 dir.create(allPerimOutputFolder, showWarnings = F)
+dir.create(secondaryOutputFolder, showWarnings = F)
 
 ## Function Definitions ----
 
@@ -398,16 +415,26 @@ rowColFromLatLong <- function(x, lat, long) {
 }
 
 # Function to assign crs from a template to an object and return object
-alignOutputs <- function(x, template) {
+alignOutputs <- function(x, template, binarize = T) {
   # FireSTARR overwrites crs, but does not reproject
   # - Assign it back to the template CRS
   crs(x) <- crs(template)
-  x %>%
+  output <- x %>%
     crop(template) %>%
-    extend(template) %>%
-    is.na %>% # FireStarr returns NA instead of zero
-    `!` %>%   # inverts the is.na
-    return()
+    extend(template)
+  
+  # FireStarr returns NA instead of zero
+  # - values can either be binarized to 1 / 0 or just have NA reclassed to zero
+  if(binarize) {
+    output <- output %>%
+      is.na %>% 
+      `!`       
+  } else {
+    output <- output %>%
+      classify(matrix(c(NA, 0), ncol = 2))
+  }
+
+  return(output)
 }
 
 # Get burn area from output csv
@@ -487,6 +514,7 @@ runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, IgnRow, IgnC
             "--dc", DC,
             "--output_date_offsets", str_c("[", numDays, "]"),
             "-s --occurrence --no-intensity --no-probability --deterministic --force-fuel --rowcol-ignition --force-curing",
+            if(keepSecondaries) "-i" else NULL, # The individual burn map flag (-i) is used to generate all secondary outputs
             "-q -q -q -q", # Reduce output level multiple times for silent output
             "--curing", Curing,
             if(GreenUp) "--force-greenup" else "--force-no-greenup",
@@ -673,6 +701,46 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
                     datatype = "INT4S",
                     gdal = c("COMPRESS=DEFLATE","ZLEVEL=9","PREDICTOR=2")))
       }
+
+      # Save requested secondary outputs
+      for (component in outputComponentsToKeep) {
+        # Find the correct secondary output in the same folder as the burn grid
+        inputComponentFileName <- burnGrids[UniqueFireIDs[i]] %>%
+          dirname() %>%
+          list.files(pattern = str_c("^\\d.*", lookup(component, outputComponentNames, outputComponentRawSuffix), ".tif$"), full.names = T) %>%
+          tail(1)
+        if (length(inputComponentFileName) > 0) {
+          # Generate output file name
+          outputComponentFileName <- str_c(secondaryOutputFolder, "/it", Iteration,"_fire_", FireIDs[i], "_", lookup(component, outputComponentNames, outputComponentCleanSuffix), ".tif") %>%
+            normalizePath()
+
+          # Rewrite as GeoTiff to output folder
+          rast(inputComponentFileName) %>%
+            alignOutputs(fuelsRaster, binarize = F) %>%
+            mask(fuelsRaster) %>%
+            writeRaster(outputComponentFileName,
+              overwrite = T,
+              NAflag = -9999,
+              wopt = list(
+                filetype = "GTiff",
+                datatype = "INT4S",
+                gdal = c("COMPRESS=DEFLATE", "ZLEVEL=9", "PREDICTOR=2")
+              )
+            )
+
+          # Update corresponding table in SyncroSim
+          outputComponentTables[[component]] <<- rbind(
+            outputComponentTables[[component]],
+            data.frame(
+              Iteration = Iteration,
+              Timestep = FireIDs[i], # TODO: Separate out timestep and fire ID
+              FireID = FireIDs[i],
+              FileName = outputComponentFileName
+            )
+          )
+        }
+        unlink(inputComponentFileName)
+      }
     }
   }
 
@@ -744,6 +812,22 @@ ignitionLocation <- DeterministicIgnitionLocation %>%
     IgnColumn = rowColFromLatLong(fuelsRaster %>% extend(padded_extent), Latitude, Longitude)[,2]) %>%
   dplyr::select("Iteration","FireID","IgnColumn","IgnRow","Latitude","Longitude","Season") %>%
   arrange("Iteration", "FireID")
+
+# Decide which burn components to keep
+# - Parse table
+outputComponentsToKeep <- OutputOptionsSpatialFireSTARR %>%
+  pivot_longer(-starts_with(c("Scenario", "Project", "Parent")), names_to = "component", values_to = "keep") %>%
+  filter(keep) %>%
+  pull(component)
+
+# Set a flag to decide whether or not to handle secondary outputs
+keepSecondaries <- length(outputComponentsToKeep) > 0
+
+# - Initialize list of tables to hold outputs
+outputComponentTables <- list()
+for (component in outputComponentsToKeep) {
+  outputComponentTables[[component]] <- data.frame()
+}
 
 # Combine deterministic input tables ----
 fireGrowthInputs <- DeterministicBurnCondition %>%
@@ -884,6 +968,15 @@ if(saveBurnMaps) {
   # Output if there are records to save
   if(!isDatasheetEmpty(OutputBurnMap))
     saveDatasheet(myScenario, OutputBurnMap, "burnP3Plus_OutputBurnMap")
+  
+  # Output secondary outputs if present
+  if (length(outputComponentsToKeep) > 0) {
+    for (i in seq_along(outputComponentTables)) {
+      if (!isDatasheetEmpty(outputComponentTables[[i]])) {
+        saveDatasheet(myScenario, outputComponentTables[[i]], str_c("burnP3PlusFireSTARR_Output", outputComponentsToKeep[i], "Map"))
+      }
+    }
+  }
   
   updateRunLog("Finished accumulating burn maps in ", updateBreakpoint())
 }
