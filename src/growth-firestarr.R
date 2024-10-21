@@ -8,6 +8,7 @@ suppressPackageStartupMessages(library(tidyverse))
 suppressPackageStartupMessages(library(lubridate))
 suppressPackageStartupMessages(library(terra))
 suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(sf))
 
 checkPackageVersion <- function(packageString, minimumVersion){
   result <- compareVersion(as.character(packageVersion(packageString)), minimumVersion)
@@ -21,9 +22,10 @@ checkPackageVersion <- function(packageString, minimumVersion){
 checkPackageVersion("rsyncrosim", "2.0.0")
 checkPackageVersion("tidyverse",  "2.0.0")
 checkPackageVersion("terra",      "1.5.21")
-checkPackageVersion("dplyr",      "1.1.4")
-checkPackageVersion("codetools",  "0.2.20")
-checkPackageVersion("data.table", "1.16.0")
+checkPackageVersion("dplyr",      "1.1.2")
+checkPackageVersion("codetools",  "0.2.19")
+checkPackageVersion("data.table", "1.14.8")
+checkPackageVersion("sf",         "1.0.7")
 
 # Setup ----
 progressBar(type = "message", message = "Preparing inputs...")
@@ -376,41 +378,26 @@ resetFolder <- function(path) {
 
 # Function to convert from latlong to cell index
 cellFromLatLong <- function(x, lat, long) {
-  # Convert list of lat and long to SpatVector, reproject to source crs
-  points <- matrix(c(long, lat), ncol = 2) %>%
-    vect(crs = "EPSG:4326") %>%
-    project(x)
-
-  # Get vector of cell ID's from points
-  return(cells(x, points)[, "cell"])
-}
-
-# Function to convert a raster and row and column indices to Lat Long
-latlonFromRowCol <- function(x, row, col) {
-  cellFromRowCol(x, row, col) %>%
-    {
-      as.points(x, na.rm = F)[.]
-    } %>%
-    project("EPSG:4326") %>%
-    crds() %>%
-    return()
+  xy_coords <- data.frame(long=long, lat=lat) %>%
+    st_as_sf(crs = "EPSG:4326", coords = c("long","lat")) %>%
+    st_transform(crs = crs(x)) %>%
+    st_coordinates
+  
+  return(cellFromXY(x, xy = xy_coords))
 }
 
 # Function to convert from latlong to row and col
 # - Note that unlike R, firestarr 0-indexes row and col, with rows starting from the bottom up
 rowColFromLatLong <- function(x, lat, long) {
-  # Convert list of lat and long to SpatVector, reproject to source crs
-  points <- matrix(c(long, lat), ncol = 2) %>%
-    vect(crs = "EPSG:4326") %>%
-    project(x)
-  
-  # Get vector of cell ID's from points
-  cellIDs <- cells(x, points)[, "cell"]
-  rowCols <- rowColFromCell(x, cellIDs)
+  # Convert lat long to cell IDs to row col matrix
+  rowCols <- cellFromLatLong(x = x, lat = lat, long = long) %>%
+    rowColFromCell(object = x) 
 
   # FireStarr counts rows from the bottom and both metrics must be 0 indexed
   rowCols[,1] <- nrow(x) - rowCols[,1]
   rowCols[,2] <- rowCols[,2] - 1
+
+  # Return
   return(rowCols)
 }
 
