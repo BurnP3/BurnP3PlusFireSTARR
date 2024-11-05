@@ -493,23 +493,28 @@ runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, IgnRow, IgnC
   outputFolder <- file.path(gridOutputFolder, str_pad(UniqueBatchFireIndex, 5, pad="0"))
   dir.create(outputFolder, showWarnings = F)
   
-  system2(firestarrExecutable,
-          c(outputFolder,
-            "2000-06-01", # Mock date set in weather files
-            Latitude, Longitude,
-            "13:00", # Mock start time set in weather files
-            "--ffmc", FFMC,
-            "--dmc", DMC,
-            "--dc", DC,
-            "--output_date_offsets", str_c("[", numDays, "]"),
-            "-s --occurrence --no-intensity --no-probability --deterministic --force-fuel --rowcol-ignition --force-curing",
-            if(keepSecondaries) "-i" else NULL, # The individual burn map flag (-i) is used to generate all secondary outputs
-            "-q -q -q -q", # Reduce output level multiple times for silent output
-            "--curing", Curing,
-            if(GreenUp) "--force-greenup" else "--force-no-greenup",
-            "--ign-row", IgnRow,
-            "--ign-col", IgnColumn,
-            "--wx", str_c(weatherFolder, "/weather", UniqueBatchFireIndex, ".csv")))
+  firestarr_args <- 
+    c(outputFolder,
+      "2000-06-01", # Mock date set in weather files
+      Latitude, Longitude,
+      "13:00", # Mock start time set in weather files
+      "--ffmc", FFMC,
+      "--dmc", DMC,
+      "--dc", DC,
+      "--output_date_offsets", str_c("[", numDays, "]"),
+      "-s --occurrence --no-intensity --no-probability --deterministic --force-fuel --rowcol-ignition --force-curing",
+      if(keepSecondaries) "-i" else NULL, # The individual burn map flag (-i) is used to generate all secondary outputs
+      "-q -q -q -q", # Reduce output level multiple times for silent output
+      "--curing", Curing,
+      if(GreenUp) "--force-greenup" else "--force-no-greenup",
+      "--ign-row", IgnRow,
+      "--ign-col", IgnColumn,
+      "--wx", str_c(weatherFolder, "/weather", UniqueBatchFireIndex, ".csv"))
+
+  # Log arguemnts used for run
+  fwrite(list(c(str_c("./", firestarrExecutable), firestarr_args)), "fs-arguments.log", eol = " ")
+
+  system2(firestarrExecutable, firestarr_args)
 }
 
 runFireSTARRBatch <- function(ignitionData) {
