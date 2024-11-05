@@ -712,7 +712,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
               NAflag = -9999,
               wopt = list(
                 filetype = "GTiff",
-                datatype = "INT4S",
+                datatype = "FLT4S",
                 gdal = c("COMPRESS=DEFLATE", "ZLEVEL=9", "PREDICTOR=2")
               )
             )
