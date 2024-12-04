@@ -195,7 +195,7 @@ checkSpatialInput(elevationRaster, "Elevation")
 
 # Names and output file suffixes of FireSTARR-specific secondary outputs
 outputComponentNames <- c("RateOfSpread", "FireIntensity", "SpreadDirection")
-outputComponentRawSuffix <- c("_ros", "_", "_raz") # Note that intensity outputs just end in "_.tif"
+outputComponentRawSuffix <- c("_ros", "_intensity", "_raz") # Note that intensity outputs just end in "_.tif"
 outputComponentCleanSuffix <- c("ros", "fi", "raz")
 
 ## Extract relevant parameters ----
@@ -388,19 +388,22 @@ cellFromLatLong <- function(x, lat, long) {
   return(cellFromXY(x, xy = xy_coords))
 }
 
-# Function to convert from latlong to row and col
-# - Note that unlike R, firestarr 0-indexes row and col, with rows starting from the bottom up
-rowColFromLatLong <- function(x, lat, long) {
-  # Convert lat long to cell IDs to row col matrix
-  rowCols <- cellFromLatLong(x = x, lat = lat, long = long) %>%
-    rowColFromCell(object = x) 
+# Function to get median julian day from season
+# - 2001 is default to avoid leap years
+getSeasonMedianDate <- function(season, year = 2001) {
+  # Extract Julian day
+  julian_day <- SeasonTable %>%
+    dplyr::filter(Name == season) %>%
+    pull(JulianDay)
 
-  # FireStarr counts rows from the bottom and both metrics must be 0 indexed
-  rowCols[,1] <- nrow(x) - rowCols[,1]
-  rowCols[,2] <- rowCols[,2] - 1
+  # Create date object
+  d <- lubridate::ymd(20010101)
 
-  # Return
-  return(rowCols)
+  # Set julian day and year
+  lubridate::yday(d) <- julian_day
+  lubridate::year(d) <- year
+
+  return(d)
 }
 
 # Function to assign crs from a template to an object and return object
@@ -491,26 +494,29 @@ processOutputs <- function(batchOutput, rawOutputGridPaths) {
 }
 
 # Function to call FireSTARR on the (global) parameter file
-runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, IgnRow, IgnColumn, numDays, Curing, GreenUp, DC, DMC, FFMC, ...) {
+runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, numDays, Season, Curing, GreenUp, DC, DMC, FFMC, ...) {
   outputFolder <- file.path(gridOutputFolder, str_pad(UniqueBatchFireIndex, 5, pad="0"))
   dir.create(outputFolder, showWarnings = F)
+
+  # Get median date of current season for ignition date
+  ignDate <- getSeasonMedianDate(Season) %>%
+    lubridate::stamp("1999-12-31")() # yyyy-mm-dd is expected by FireSTARR
   
   firestarr_args <- 
     c(outputFolder,
-      "2000-06-01", # Mock date set in weather files
+      ignDate, 
       Latitude, Longitude,
       "13:00", # Mock start time set in weather files
       "--ffmc", FFMC,
       "--dmc", DMC,
       "--dc", DC,
       "--output_date_offsets", str_c("[", numDays, "]"),
-      "-s --occurrence --no-intensity --no-probability --deterministic --force-fuel --rowcol-ignition --force-curing",
+      "--raster-root rasters",
+      "-s --occurrence --no-intensity --no-probability --deterministic",
       if(keepSecondaries) "-i" else NULL, # The individual burn map flag (-i) is used to generate all secondary outputs
       "-q -q -q -q", # Reduce output level multiple times for silent output
       "--curing", Curing,
       if(GreenUp) "--force-greenup" else "--force-no-greenup",
-      "--ign-row", IgnRow,
-      "--ign-col", IgnColumn,
       "--wx", str_c(weatherFolder, "/weather", UniqueBatchFireIndex, ".csv"))
 
   # Log arguemnts used for run
@@ -585,7 +591,9 @@ runBatch <- function(batchInputs) {
 
 # Function to convert daily weather data for every day of burning to format
 # expected by C2F and save to file
-generateWeatherFile <- function(weatherData, UniqueBatchFireIndex) {
+generateWeatherFile <- function(weatherData, UniqueBatchFireIndex, season, year = 2001) {
+  ignDate <- getSeasonMedianDate(season, year)
+
   weatherData %>%
     # To convert daily weather to hourly, we need to repeat each row for every
     # hour burned that day and pad the rest of the day with zeros. To do this,
@@ -605,14 +613,14 @@ generateWeatherFile <- function(weatherData, UniqueBatchFireIndex) {
     # Next we add a mock date (June 1). Note this is also required when calling firestarr
     mutate(
       time = (row_number() + 12) %% 24,
-      date = as.integer((row_number() + 12) / 24) + ymd(20000601),
-      date = str_c(year(date), "-", str_pad(month(date), 2, pad="0"), "-", str_pad(day(date), 2, pad="0"), " ", str_pad(time, 2, pad="0"), ":00:00")
+      date = as.integer((row_number() + 12) / 24) + ignDate,
+      date = str_c(date, " ", str_pad(time, 2, pad="0"), ":00:00") # Default date printing format of lubridate happens to match yyyy-mm-dd format FireSTARR expects
     ) %>%
     # Fires are started on the first day at 1pm, but some versions of tbd require weather from midnight
     # - We accomplish this by repeating the first day's weather as needed and updating the time accordingly
     (function(x) { 
       slice(x, rep(1, 13)) %>%
-      mutate(date = str_c("2000-06-01 ", str_pad(0:12, 2, pad="0"), ":00:00")) %>%
+      mutate(date = str_c(ignDate, " ", str_pad(0:12, 2, pad="0"), ":00:00")) %>%
       bind_rows(x)}) %>%
 
     # Finally we rename and reorder columns and write to file
@@ -629,11 +637,11 @@ generateWeatherFiles <- function(DeterministicBurnCondition){
   # Generate files as needed
   DeterministicBurnCondition %>%
     dplyr::select(-starts_with("Timestep")) %>%
-    group_by(Iteration, FireID) %>%
+    group_by(Iteration, FireID, Season) %>%
     nest() %>%
     ungroup() %>%
     arrange(Iteration, FireID) %>%
-    transmute(weatherData = data, UniqueBatchFireIndex = row_number()) %>%
+    transmute(weatherData = data, UniqueBatchFireIndex = row_number(), season = Season) %>%
     pmap(generateWeatherFile)
   invisible()
 }
@@ -801,12 +809,8 @@ FuelType %>%
   write_csv(fuelLookupFile, escape = "none")
 
 # Calculate ignition location in grid row and column
-# - Ignition row and col must be calculated from a padded fuels raster as we pad the inputs we provide to FireSTARR
 ignitionLocation <- DeterministicIgnitionLocation %>%
-  mutate(
-    IgnRow    = rowColFromLatLong(fuelsRaster %>% extend(padded_extent), Latitude, Longitude)[,1],
-    IgnColumn = rowColFromLatLong(fuelsRaster %>% extend(padded_extent), Latitude, Longitude)[,2]) %>%
-  dplyr::select("Iteration","FireID","IgnColumn","IgnRow","Latitude","Longitude","Season") %>%
+  dplyr::select("Iteration","FireID","Latitude","Longitude","Season") %>%
   arrange("Iteration", "FireID")
 
 # Decide which burn components to keep
