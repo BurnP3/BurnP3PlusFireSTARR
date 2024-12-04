@@ -293,8 +293,15 @@ if(any(!fuelIdsPresent %in% c(FuelType$ID, NaN)))
 
 ## Setup files and folders ----
 
+# Create temp folder, ensure it is empty
+tempDir <- ssimEnvironment()$TempDirectory %>%
+  str_replace_all("\\\\", "/") %>%
+  file.path("growth-firestarr/")
+unlink(tempDir, recursive = T, force = T)
+dir.create(tempDir, showWarnings = F)
+
 # Copy FireSTARR executable
-setwd(ssimEnvironment()$TempDirectory)
+setwd(tempDir)
 
 # Select the appropriate executable for the system OS
 if(.Platform$OS.type == "unix") {
@@ -304,8 +311,8 @@ if(.Platform$OS.type == "unix") {
   firestarrExecutable <- "tbd.exe"
 }
 firestarrSettings <- "settings.ini"
-file.copy(file.path(ssimEnvironment()$PackageDirectory, firestarrExecutable), ssimEnvironment()$TempDirectory, overwrite = T)
-file.copy(file.path(ssimEnvironment()$PackageDirectory, firestarrSettings), ssimEnvironment()$TempDirectory, overwrite = T)
+file.copy(file.path(ssimEnvironment()$PackageDirectory, firestarrExecutable), tempDir, overwrite = T)
+file.copy(file.path(ssimEnvironment()$PackageDirectory, firestarrSettings), tempDir, overwrite = T)
 
 # Set as executable if in linux
 if(.Platform$OS.type == "unix")
@@ -314,12 +321,7 @@ if(.Platform$OS.type == "unix")
 # Find look up for internal fuel names
 InternalFuelNameFile <- file.path(ssimEnvironment()$PackageDirectory, "Internal Fuel Names.csv")
 
-# Create temp folder, ensure it is empty
-tempDir <- "firestarr-inputs"
-unlink(tempDir, recursive = T, force = T)
-dir.create(tempDir, showWarnings = F)
-
-weatherFolder <- file.path(tempDir, "weathers")
+weatherFolder <- "weathers"
 unlink(weatherFolder, recursive = T, force = T)
 dir.create(weatherFolder, showWarnings = F)
 
@@ -329,11 +331,11 @@ elevationRasterFile <- file.path(tempDir, "rasters", "default", "dem_16_0.tif")
 fuelLookupFile      <- file.path(tempDir, "fuel.lut")
 
 # Create folders for various outputs
-gridOutputFolder <- "firestarr-outputs"
-accumulatorOutputFolder <- "firestarr-accumulator"
-seasonalAccumulatorOutputFolder <- "firestarr-accumulator-seasonal"
-allPerimOutputFolder <- "firestarr-allperim"
-secondaryOutputFolder <- "firestarr-secondary"
+gridOutputFolder <- "outputs"
+accumulatorOutputFolder <- "accumulator"
+seasonalAccumulatorOutputFolder <- "accumulator-seasonal"
+allPerimOutputFolder <- "allperim"
+secondaryOutputFolder <- "secondary"
 unlink(gridOutputFolder, recursive = T, force = T)
 unlink(accumulatorOutputFolder, recursive = T, force = T)
 unlink(allPerimOutputFolder, recursive = T, force = T)
@@ -615,7 +617,7 @@ generateWeatherFile <- function(weatherData, UniqueBatchFireIndex) {
 
     # Finally we rename and reorder columns and write to file
     dplyr::transmute(Scenario = 0, Date = date, PREC = Precipitation, TEMP = Temperature, RH = RelativeHumidity, WS = WindSpeed, WD = WindDirection, FFMC = FineFuelMoistureCode, DMC = DuffMoistureCode, DC = DroughtCode, ISI = InitialSpreadIndex, BUI = BuildupIndex, FWI = FireWeatherIndex) %>%
-    fwrite(file.path(weatherFolder, str_c("weather", UniqueBatchFireIndex, ".csv")))
+    fwrite(str_c(weatherFolder, "/weather", UniqueBatchFireIndex, ".csv"))
   invisible()
 }
 
