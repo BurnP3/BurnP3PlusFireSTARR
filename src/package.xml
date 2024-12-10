@@ -217,6 +217,7 @@
 	<!--Layouts-->
 
   <!--Results Transformer Layout-->
+<!-- TODO: Re-enable secondary outputs
 	<layout type="Export">
 		<group name="Export" displayName="FireSTARR">
 			<item name="RateOfSpreadMap" displayName="Rate of Spread Maps"/>
@@ -224,8 +225,10 @@
 			<item name="SpreadDirectionMap" displayName="Spread Direction Maps"/>
 		</group>
 	</layout>
+TODO: Re-enable secondary outputs -->
 
   <!--Map Layout-->
+<!-- TODO: Re-enable secondary outputs
 	<layout type="Map">
 		<group name="FirestarrSecondaryOutputs" displayName="FireSTARR Secondary Outputs">
 			<item name="ros" displayName="Rate of Spread" dataSheet="OutputRateOfSpreadMap" column="FileName"/>
@@ -233,6 +236,7 @@
       <item name="sd" displayName="Spread Direction" dataSheet="OutputSpreadDirectionMap" column="FileName"/>
 		</group>
 	</layout>
+TODO: Re-enable secondary outputs -->
 
 	<!--Project Layout-->
 	<layout type="Project">
@@ -240,8 +244,10 @@
 	</layout>
 
   <!--Scenario Layout-->
+<!-- TODO: Re-enable secondary outputs
 	<layout type="Scenario">
 		<item name="OutputOptionSpatial" displayName="Output Options" showIf="inPipeline"/>
 	</layout>
+TODO: Re-enable secondary outputs -->
 
 </package>
