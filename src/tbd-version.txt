@@ -1,0 +1,5 @@
+2024-12-05 Both versions built from the `dev-patch` branch on commit `1a95b5d`.
+- Linux system deps: 
+ - libgeotiff5
+   - libtiff6
+   - libproj25
