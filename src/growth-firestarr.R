@@ -340,15 +340,18 @@ fuelLookupFile      <- file.path(tempDir, "fuel.lut")
 
 # Create folders for various outputs
 gridOutputFolder <- "outputs"
+shapeOutputFolder <- "shapes"
 accumulatorOutputFolder <- "accumulator"
 seasonalAccumulatorOutputFolder <- "accumulator-seasonal"
 allPerimOutputFolder <- "allperim"
 secondaryOutputFolder <- "secondary"
 unlink(gridOutputFolder, recursive = T, force = T)
+unlink(shapeOutputFolder, recursive = T, force = T)
 unlink(accumulatorOutputFolder, recursive = T, force = T)
 unlink(allPerimOutputFolder, recursive = T, force = T)
 unlink(secondaryOutputFolder, recursive = T, force = T)
 dir.create(gridOutputFolder, showWarnings = F)
+dir.create(shapeOutputFolder, showWarnings = F)
 dir.create(accumulatorOutputFolder, showWarnings = F)
 dir.create(seasonalAccumulatorOutputFolder, showWarnings = F)
 dir.create(allPerimOutputFolder, showWarnings = F)
@@ -660,15 +663,29 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
   if(Iteration == 0) {
     for(i in seq_along(UniqueFireIDs)){
       if(!is.na(UniqueFireIDs[i]) & !is.na(burnGrids[UniqueFireIDs[i]]) ){
-        rast(burnGrids[UniqueFireIDs[i]]) %>% 
-          alignOutputs(fuelsRaster) %>%
+        burnArea <- rast(burnGrids[UniqueFireIDs[i]]) %>% 
+          alignOutputs(fuelsRaster)
+
+        burnArea %>%
           mask(fuelsRaster) %>%
-          writeRaster(str_c(allPerimOutputFolder, "/it", Iteration,"_fire_", FireIDs[i], ".tif"), 
+          writeRaster(str_c(allPerimOutputFolder, "/it", Iteration,"_fire", FireIDs[i], ".tif"), 
               overwrite = T,
               NAflag = -9999,
               wopt = list(filetype = "GTiff",
                     datatype = "INT4S",
                     gdal = c("COMPRESS=DEFLATE","ZLEVEL=9","PREDICTOR=2")))
+        
+        if(OutputOptionsSpatial$BurnPerimeter) {
+          burnArea %>%
+            # Trim down to only burned area by first converting all non-burned pixels to NA
+            classify(matrix(c(0, NA), ncol = 2)) %>%
+            trim() %>%
+            # Convert and samve
+            as.polygons() %>%
+            writeVector(str_c(shapeOutputFolder, "/it", Iteration,"_fire", FireIDs[i], ".shp"),
+              overwrite = T
+            )
+        }
       }
     }
     return()
@@ -706,12 +723,24 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
       if(OutputOptionsSpatial$AllPerim == T){
         burnArea %>%
           mask(fuelsRaster) %>%
-          writeRaster(str_c(allPerimOutputFolder, "/it", Iteration,"_fire_", FireIDs[i], ".tif"), 
+          writeRaster(str_c(allPerimOutputFolder, "/it", Iteration,"_fire", FireIDs[i], ".tif"), 
               overwrite = T,
               NAflag = -9999,
               wopt = list(filetype = "GTiff",
                     datatype = "INT4S",
                     gdal = c("COMPRESS=DEFLATE","ZLEVEL=9","PREDICTOR=2")))
+      }
+
+      if(OutputOptionsSpatial$BurnPerimeter) {
+        burnArea %>%
+          # Trim down to only burned area by first converting all non-burned pixels to NA
+          classify(matrix(c(0, NA), ncol = 2)) %>%
+          trim() %>%
+          # Convert and samve
+          as.polygons() %>%
+          writeVector(str_c(shapeOutputFolder, "/it", Iteration,"_fire", FireIDs[i], ".shp"),
+            overwrite = T
+          )
       }
 
       # Save requested secondary outputs
@@ -723,7 +752,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
           tail(1)
         if (length(inputComponentFileName) > 0) {
           # Generate output file name
-          outputComponentFileName <- str_c(secondaryOutputFolder, "/it", Iteration,"_fire_", FireIDs[i], "_", lookup(component, outputComponentNames, outputComponentCleanSuffix), ".tif") %>%
+          outputComponentFileName <- str_c(secondaryOutputFolder, "/it", Iteration,"_fire", FireIDs[i], "_", lookup(component, outputComponentNames, outputComponentCleanSuffix), ".tif") %>%
             normalizePath()
 
           # Rewrite as GeoTiff to output folder
@@ -1003,8 +1032,8 @@ if(OutputOptionsSpatial$AllPerim | (saveBurnMaps & minimumFireSize > 0)){
   OutputAllPerim <- 
     tibble(
       FileName = list.files(allPerimOutputFolder, full.names = T) %>% normalizePath(),
-      Iteration = str_extract(FileName, "\\d+_fire") %>% str_sub(end = -6) %>% as.integer(),
-      FireID = str_extract(FileName, "\\d+.tif") %>% str_sub(end = -5) %>% as.integer(),
+      Iteration = str_extract(FileName, "it\\d+") %>% str_extract("\\d+") %>% as.integer(),
+      FireID = str_extract(FileName, "fire\\d+") %>% str_extract("\\d+") %>% as.integer(),
       Timestep = FireID) %>%
     filter(Iteration %in% iterations | (Iteration == 0 & FireID %in% extraIgnitionIDs)) %>%
     as.data.frame
@@ -1019,7 +1048,25 @@ if(OutputOptionsSpatial$AllPerim | (saveBurnMaps & minimumFireSize > 0)){
 
 ## Burn perimeters ----
 if(OutputOptionsSpatial$BurnPerimeter) {
-  updateRunLog("The FireSTARR transformer currently does not provide burn perimeters.", type = "info")
+  progressBar(type = "message", message = "Saving burn perimeters...")
+  OutputBurnPerimeter <-
+    tibble(
+      FileName = list.files(shapeOutputFolder, pattern = "*.shp", full.names = T) %>% normalizePath(),
+      Tag = str_extract(FileName, "it\\d+_fire\\d+"),
+      Iteration = str_extract(Tag, "it\\d+") %>% str_extract("\\d+") %>% as.integer(),
+      FireID = str_extract(Tag, "fire\\d+") %>% str_extract("\\d+") %>% as.integer(),
+      Timestep = 0
+    ) %>%
+    filter(Iteration %in% iterations | (Iteration == 0 & FireID %in% extraIgnitionIDs)) %>%
+    dplyr::select(-Tag) %>%
+    as.data.frame()
+
+  # Output if there are records to save
+  if (!isDatasheetEmpty(OutputBurnPerimeter)) {
+    saveDatasheet(myScenario, OutputBurnPerimeter, "burnP3Plus_OutputFirePerimeter")
+  }
+
+  updateRunLog("Finished collecting burn perimeters in ", updateBreakpoint())
 }
 
 # Clean up
