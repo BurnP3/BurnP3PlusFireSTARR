@@ -155,9 +155,9 @@ if (isDatasheetEmpty(Curing)) {
   saveDatasheet(myScenario, Curing, "burnP3Plus_Curing")
 }
 
-if(!isDatasheetEmpty(FuelLoad)) {
-  updateRunLog("FireSTARR transformer currently does not support manually specifying Fuel Loading.", type = "warning")
-}
+# if(!isDatasheetEmpty(FuelLoad)) {
+#   updateRunLog("FireSTARR transformer currently does not support manually specifying Fuel Loading.", type = "warning")
+# }
 
 ## Check raster inputs for consistency ----
 
