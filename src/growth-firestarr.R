@@ -121,9 +121,8 @@ if(isDatasheetEmpty(OutputOptionsSpatial)) {
   saveDatasheet(myScenario, OutputOptionsSpatial, "burnP3Plus_OutputOptionSpatial")
 }
 
-# TODO: Re-enable secondary outputs
 if (isDatasheetEmpty(OutputOptionsSpatialFireSTARR)) {
-#  updateRunLog("No FireSTARR-specific spatial output options chosen. Defaulting to keeping no secondary spatial outputs.", type = "info")
+  updateRunLog("No FireSTARR-specific spatial output options chosen. Defaulting to keeping no secondary spatial outputs.", type = "info")
   OutputOptionsSpatialFireSTARR[1, ] <- rep(FALSE, length(OutputOptionsSpatialFireSTARR[1, ]))
   saveDatasheet(myScenario, OutputOptionsSpatialFireSTARR, "burnP3PlusFireSTARR_OutputOptionSpatial")
 }
@@ -859,12 +858,6 @@ outputComponentsToKeep <- OutputOptionsSpatialFireSTARR %>%
 
 # Set a flag to decide whether or not to handle secondary outputs
 keepSecondaries <- length(outputComponentsToKeep) > 0
-
-# TODO: Re-enable secondary outputs
-if(keepSecondaries) {
-  updateRunLog("BurnP3+ FireSTARR currently does not provide secondary outputs.", type = "info")
-  keepSecondaries <- FALSE
-}
 
 # - Initialize list of tables to hold outputs
 outputComponentTables <- list()
