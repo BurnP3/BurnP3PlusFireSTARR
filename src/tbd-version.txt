@@ -1,4 +1,6 @@
-2024-12-05 Both versions built from the `dev-patch` branch on commit `1a95b5d`.
+2024-02-07 Windows built from dev-patch branch on commit `62dd5886f`
+
+Linux is older, built from the `dev-patch` branch on commit `1a95b5d`.
 - Linux system deps: 
  - libgeotiff5
    - libtiff6
