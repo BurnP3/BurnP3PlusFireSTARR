@@ -567,7 +567,7 @@ runBatch <- function(batchInputs) {
   
   # Get relative paths to all raw outputs
   rawOutputGridPaths <- list.dirs(gridOutputFolder)[-1] %>%
-    map_chr(~ .x %>% list.files("occurrence_", full.names = T) %>% append(NA, after = 0) %>% tail(1))
+    map_chr(~ .x %>% list.files("occurrence_.*tif$", full.names = T) %>% append(NA, after = 0) %>% tail(1))
   
   # Get burn areas
   burnAreas <- getBurnAreas(rawOutputGridPaths)
@@ -979,7 +979,7 @@ if(saveBurnMaps) {
   # Build table of burn maps and save to SyncroSim
   OutputBurnMap <- 
     tibble(
-      FileName = list.files(accumulatorOutputFolder, full.names = T) %>% normalizePath(),
+      FileName = list.files(accumulatorOutputFolder, ".tif$", full.names = T) %>% normalizePath(),
       Iteration = str_extract(FileName, "\\d+.tif") %>% str_sub(end = -5) %>% as.integer(),
       Timestep = 0,
       Season = "All") %>%
@@ -991,7 +991,7 @@ if(saveBurnMaps) {
     OutputBurnMap <- OutputBurnMap %>%
       bind_rows(
         tibble(
-          FileName = list.files(seasonalAccumulatorOutputFolder, full.names = T) %>% normalizePath(),
+          FileName = list.files(seasonalAccumulatorOutputFolder, ".tif$", full.names = T) %>% normalizePath(),
           Iteration = str_extract(FileName, "\\d+-sn") %>% str_sub(end = -4) %>% as.integer(),
           Timestep = 0,
           Season = str_extract(FileName, "\\d+.tif") %>% str_sub(end = -5) %>% as.integer()) %>%
@@ -1024,7 +1024,7 @@ if(OutputOptionsSpatial$AllPerim | (saveBurnMaps & minimumFireSize > 0)){
   # Build table of burn maps and save to SyncroSim
   OutputAllPerim <- 
     tibble(
-      FileName = list.files(allPerimOutputFolder, full.names = T) %>% normalizePath(),
+      FileName = list.files(allPerimOutputFolder, ".tif$", full.names = T) %>% normalizePath(),
       Iteration = str_extract(FileName, "it\\d+") %>% str_extract("\\d+") %>% as.integer(),
       FireID = str_extract(FileName, "fire\\d+") %>% str_extract("\\d+") %>% as.integer(),
       Timestep = FireID) %>%
