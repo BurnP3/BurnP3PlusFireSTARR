@@ -757,7 +757,8 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
           # Rewrite as GeoTiff to output folder
           rast(inputComponentFileName) %>%
             alignOutputs(fuelsRaster, binarize = F) %>%
-            mask(fuelsRaster) %>%
+            # Set zero values to NA for easier summarizing
+            classify(matrix(c(0, NA), ncol = 2)) %>%
             writeRaster(outputComponentFileName,
               overwrite = T,
               NAflag = -9999,
