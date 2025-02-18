@@ -62,6 +62,8 @@ Curing <- datasheet(myScenario, "burnP3Plus_Curing", lookupsAsFactors = F, optio
 OutputOptions <- datasheet(myScenario, "burnP3Plus_OutputOption", optional = T)
 OutputOptionsSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionSpatial", optional = T)
 OutputOptionsSpatialFireSTARR <- datasheet(myScenario, "burnP3PlusFireSTARR_OutputOptionSpatial", optional = T)
+FireZoneTable <- datasheet(myScenario, "burnP3Plus_FireZone")
+WeatherZoneTable <- datasheet(myScenario, "burnP3Plus_WeatherZone")
 
 # Create function to test if datasheets are empty
 isDatasheetEmpty <- function(ds){
@@ -157,6 +159,11 @@ if (isDatasheetEmpty(Curing)) {
 # if(!isDatasheetEmpty(FuelLoad)) {
 #   updateRunLog("FireSTARR transformer currently does not support manually specifying Fuel Loading.", type = "warning")
 # }
+
+if(isDatasheetEmpty(FireZoneTable))
+  FireZoneTable <- data.frame(Name = "", ID = 0)
+if(isDatasheetEmpty(WeatherZoneTable))
+  WeatherZoneTable <- data.frame(Name = "", ID = 0)
 
 ## Check raster inputs for consistency ----
 
@@ -929,8 +936,6 @@ if(OutputOptions$FireStatistics | minimumFireSize > 0) {
     rast(datasheet(myScenario, "burnP3Plus_LandscapeRasters")[["WeatherZoneGridFileName"]]),
     error = function(e) NULL) %>%
     checkSpatialInput("Weather Zone", warnOnly = T)
-  FireZoneTable <- datasheet(myScenario, "burnP3Plus_FireZone")
-  WeatherZoneTable <- datasheet(myScenario, "burnP3Plus_WeatherZone")
     
   # Add extra information to Fire Statistic table
   OutputFireStatistic <- OutputFireStatistic %>%
@@ -952,20 +957,54 @@ if(OutputOptions$FireStatistics | minimumFireSize > 0) {
       by = c("Iteration", "FireID")) %>%
   
       # Determine Fire and Weather Zones if the rasters are present, as well as fuel type of ignition location
-      left_join(DeterministicIgnitionLocation, by = c("Iteration", "FireID")) %>%
+      left_join(DeterministicIgnitionLocation, by = c("Iteration", "FireID"))
+
+  # Determine Fire and Weather Zones if the rasters are present, as well as
+  # fuel type of ignition location
+  OutputFireStatistic$cell <- cellFromXY(
+    fuelsRaster,
+    xy = data.frame(long=OutputFireStatistic$Longitude,
+                    lat=OutputFireStatistic$Latitude) %>%
+        st_as_sf(crs = "EPSG:4326",
+                coords = c("long","lat")) %>%
+        st_transform(crs = crs(fuelsRaster)) %>%
+        st_coordinates)
+
+  if (!is.null(weatherZoneRaster)){
+    OutputFireStatistic <- OutputFireStatistic %>%
       mutate(
-        cell = cellFromLatLong(fuelsRaster, Latitude, Longitude),
-        FireZone = ifelse(!is.null(fireZoneRaster), fireZoneRaster[][cell] %>% lookup(FireZoneTable$ID, FireZoneTable$Name), ""),
-        WeatherZone = ifelse(!is.null(weatherZoneRaster), weatherZoneRaster[][cell] %>% lookup(WeatherZoneTable$ID, WeatherZoneTable$Name), ""),
-        FuelType = fuelsRaster[][cell] %>% lookup(FuelType$ID, FuelType$Name)) %>%
-      
-      # Incorporate Lat and Long and add TimeStep manually
-      mutate(Timestep = 0) %>%
-    
+        weatherzoneID = weatherZoneRaster[][cell],
+        WeatherZone = lookup(weatherzoneID, WeatherZoneTable$ID, WeatherZoneTable$Name)
+      ) %>%
+      dplyr::select(-weatherzoneID)
+  } else{
+    OutputFireStatistic$WeatherZone <- WeatherZoneTable$Name
+  }
+
+  if (!is.null(fireZoneRaster)){
+    OutputFireStatistic <- OutputFireStatistic %>%
+      mutate(
+        firezoneID = fireZoneRaster[][cell],
+        FireZone = lookup(firezoneID, FireZoneTable$ID, FireZoneTable$Name)
+      ) %>%
+      dplyr::select(-firezoneID)
+  } else{
+    OutputFireStatistic$FireZone <- FireZoneTable$Name
+  }
+
+  OutputFireStatistic <- OutputFireStatistic %>%
+    # Incorporate Lat and Long and add TimeStep manually
+    mutate(
+      fueltypeID = fuelsRaster[][cell],
+      FuelType = lookup(fueltypeID, FuelType$ID, FuelType$Name),
+      Timestep = 0) %>%
+
       # Clean up for saving
-      dplyr::select(Iteration, Timestep, FireID, Latitude, Longitude, Season, Cause, FireZone, WeatherZone, FuelType, FireDuration, HoursBurning, Area, ResampleStatus) %>%
+      dplyr::select(Iteration, Timestep, FireID, Latitude, Longitude, Season,
+                    Cause, FireZone, WeatherZone, FuelType, FireDuration,
+                    HoursBurning, Area, ResampleStatus) %>%
       as.data.frame()
-      
+
     # Output if there are records to save
     if(!isDatasheetEmpty(OutputFireStatistic))
       saveDatasheet(myScenario, OutputFireStatistic, "burnP3Plus_OutputFireStatistic", append = T)
