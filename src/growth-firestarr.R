@@ -160,6 +160,13 @@ if (isDatasheetEmpty(Curing)) {
 #   updateRunLog("FireSTARR transformer currently does not support manually specifying Fuel Loading.", type = "warning")
 # }
 
+# Replace missing seasons with "All" to use default median date
+DeterministicIgnitionLocation <- DeterministicIgnitionLocation %>%
+  mutate(
+    Season = na_if(as.character(Season), ""),
+    Season = replace_na(Season, "All")
+  )
+
 if(isDatasheetEmpty(FireZoneTable))
   FireZoneTable <- data.frame(Name = "", ID = 0)
 if(isDatasheetEmpty(WeatherZoneTable))
