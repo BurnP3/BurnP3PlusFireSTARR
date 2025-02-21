@@ -160,7 +160,7 @@
 	</dataSheet>
 
   <dataSheet name="OutputRateOfSpreadMap" displayName="Output Rate of Spread Map">
-		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="Greater" formula1="0" format="d"/>
+		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d"/>
 		<column name="Timestep" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d" isVisible="False"/>
 		<column name="FireID" dataType="Integer"/>
 		<column name="FileName" displayName="Rate of Spread Map" dataType="String" allowDbNull="False" isExternalFile="True" isRaster="True" bandColumn="Band" filenameCode="RateOfSpread"/>
@@ -168,7 +168,7 @@
 	</dataSheet>
 
 	<dataSheet name="OutputFireIntensityMap" displayName="Output Rate of Spread Map">
-		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="Greater" formula1="0" format="d"/>
+		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d"/>
 		<column name="Timestep" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d" isVisible="False"/>
 		<column name="FireID" dataType="Integer"/>
 		<column name="FileName" displayName="Fire Intensity Map" dataType="String" allowDbNull="False" isExternalFile="True" isRaster="True" bandColumn="Band" filenameCode="FireIntensity"/>
@@ -176,7 +176,7 @@
 	</dataSheet>
 
   <dataSheet name="OutputSpreadDirectionMap" displayName="Output Spread Direction Map">
-		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="Greater" formula1="0" format="d"/>
+		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d"/>
 		<column name="Timestep" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d" isVisible="False"/>
 		<column name="FireID" dataType="Integer"/>
 		<column name="FileName" displayName="Spread Direction Map" dataType="String" allowDbNull="False" isExternalFile="True" isRaster="True" bandColumn="Band" filenameCode="SpreadDirection"/>

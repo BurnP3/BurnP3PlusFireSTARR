@@ -672,7 +672,7 @@ generateWeatherFiles <- function(DeterministicBurnCondition){
 
 # Function to summarize individual burn grids by iteration
 generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireIDs, Seasons) {
-  # For iteration zero (fires for resampling), only save individual burn maps
+  # For iteration zero (fires for resampling), only save individual burn maps and secondary outputs
   if(Iteration == 0) {
     for(i in seq_along(UniqueFireIDs)){
       if(!is.na(UniqueFireIDs[i]) & !is.na(burnGrids[UniqueFireIDs[i]]) ){
@@ -698,6 +698,47 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
             writeVector(str_c(shapeOutputFolder, "/it", Iteration,"_fire", FireIDs[i], ".shp"),
               overwrite = T
             )
+        }
+
+        # Save requested secondary outputs
+        for (component in outputComponentsToKeep) {
+          # Find the correct secondary output in the same folder as the burn grid
+          inputComponentFileName <- burnGrids[UniqueFireIDs[i]] %>%
+            dirname() %>%
+            list.files(pattern = str_c("^\\d.*", lookup(component, outputComponentNames, outputComponentRawSuffix), ".tif$"), full.names = T) %>%
+            tail(1)
+          if (length(inputComponentFileName) > 0) {
+            # Generate output file name
+            outputComponentFileName <- str_c(secondaryOutputFolder, "/it", Iteration,"_fire", FireIDs[i], "_", lookup(component, outputComponentNames, outputComponentCleanSuffix), ".tif") %>%
+              normalizePath()
+
+            # Rewrite as GeoTiff to output folder
+            rast(inputComponentFileName) %>%
+              alignOutputs(fuelsRaster, binarize = F) %>%
+              # Set zero values to NA for easier summarizing
+              classify(matrix(c(0, NA), ncol = 2)) %>%
+              writeRaster(outputComponentFileName,
+                overwrite = T,
+                NAflag = -9999,
+                wopt = list(
+                  filetype = "GTiff",
+                  datatype = "FLT4S",
+                  gdal = c("COMPRESS=DEFLATE", "ZLEVEL=9", "PREDICTOR=2")
+                )
+              )
+
+            # Update corresponding table in SyncroSim
+            outputComponentTables[[component]] <<- rbind(
+              outputComponentTables[[component]],
+              data.frame(
+                Iteration = Iteration,
+                Timestep = FireIDs[i], # TODO: Separate out timestep and fire ID
+                FireID = FireIDs[i],
+                FileName = outputComponentFileName
+              )
+            )
+          }
+          unlink(inputComponentFileName)
         }
       }
     }
