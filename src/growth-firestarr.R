@@ -62,7 +62,7 @@ Curing <- datasheet(myScenario, "burnP3Plus_Curing", lookupsAsFactors = F, optio
 # FuelLoad <- datasheet(myScenario, "burnP3Plus_FuelLoad", lookupsAsFactors = F, optional = T)
 OutputOptions <- datasheet(myScenario, "burnP3Plus_OutputOption", optional = T)
 OutputOptionsSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionSpatial", optional = T)
-OutputOptionsSpatialFireSTARR <- datasheet(myScenario, "burnP3PlusFireSTARR_OutputOptionSpatial", optional = T)
+OutputOptionSecondarySpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionSecondarySpatial", optional = T)
 FireZoneTable <- datasheet(myScenario, "burnP3Plus_FireZone")
 WeatherZoneTable <- datasheet(myScenario, "burnP3Plus_WeatherZone")
 
@@ -124,11 +124,19 @@ if(isDatasheetEmpty(OutputOptionsSpatial)) {
   saveDatasheet(myScenario, OutputOptionsSpatial, "burnP3Plus_OutputOptionSpatial")
 }
 
-if (isDatasheetEmpty(OutputOptionsSpatialFireSTARR)) {
-  updateRunLog("No FireSTARR-specific spatial output options chosen. Defaulting to keeping no secondary spatial outputs.", type = "info")
-  OutputOptionsSpatialFireSTARR[1, ] <- rep(FALSE, length(OutputOptionsSpatialFireSTARR[1, ]))
-  saveDatasheet(myScenario, OutputOptionsSpatialFireSTARR, "burnP3PlusFireSTARR_OutputOptionSpatial")
+if (isDatasheetEmpty(OutputOptionSecondarySpatial)) {
+  updateRunLog("No secondary spatial output options chosen. Defaulting to keeping no secondary spatial outputs.", type = "info")
+  OutputOptionSecondarySpatial[1, ] <- rep(FALSE, length(OutputOptionSecondarySpatial[1, ]))
+  saveDatasheet(myScenario, OutputOptionSecondarySpatial, "burnP3Plus_OutputOptionSecondarySpatial")
+} else {
+  # Check if any unsupported outputs are chosen
+  if(OutputOptionSecondarySpatial %>%
+     dplyr::select(-RateOfSpread, -FireIntensity, -SpreadDirection) %>%
+     slice(1) %>%
+     any(na.rm = T))
+    updateRunLog("FireSTARR currently only produces Rate of Spread, Fire Intensity, and Spread Direction secondary burn maps. Other secondary burn options will be ignored.", type = "warning")
 }
+
 
 if(isDatasheetEmpty(BatchOption)) {
   updateRunLog("No batch size chosen. Defaulting to batches of 250 iterations.", type = "info")
@@ -921,7 +929,7 @@ ignitionLocation <- DeterministicIgnitionLocation %>%
 
 # Decide which burn components to keep
 # - Parse table
-outputComponentsToKeep <- OutputOptionsSpatialFireSTARR %>%
+outputComponentsToKeep <- OutputOptionSecondarySpatial %>%
   pivot_longer(-starts_with(c("Scenario", "Project", "Parent")), names_to = "component", values_to = "keep") %>%
   filter(keep) %>%
   pull(component)
@@ -1114,7 +1122,7 @@ if(saveBurnMaps) {
   if (length(outputComponentsToKeep) > 0) {
     for (i in seq_along(outputComponentTables)) {
       if (!isDatasheetEmpty(outputComponentTables[[i]])) {
-        saveDatasheet(myScenario, outputComponentTables[[i]], str_c("burnP3PlusFireSTARR_Output", outputComponentsToKeep[i], "Map"))
+        saveDatasheet(myScenario, outputComponentTables[[i]], str_c("burnP3Plus_Output", outputComponentsToKeep[i], "Map"))
       }
     }
   }
