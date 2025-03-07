@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<package name="burnP3PlusFireSTARR" displayName= "BurnP3+ FireSTARR" description= "FireSTARR fire growth model for BurnP3+" version="1.2.0" url="https://github.com/BurnP3/BurnP3PlusFireSTARR" minSyncroSimVersion="3.1.0">
+<package name="burnP3PlusFireSTARR" displayName= "BurnP3+ FireSTARR" description= "FireSTARR fire growth model for BurnP3+" version="1.1.0" url="https://github.com/BurnP3/BurnP3PlusFireSTARR">
 
-  <builtFor package = "burnP3Plus" version = "2.3.0"/>
+  <builtFor package = "burnP3Plus" version = "2.2.0"/>
 
   <!--Project Datasheets-->
 
@@ -151,97 +151,49 @@
 		<validation validationType="Unique" columns="FuelType"/>
 	</dataSheet>
 
-  	<!--Scenario Datasheets-->
-
-	<dataSheet name="OutputOptionSpatial" displayName="Secondary Outputs" isSingleRow="True">
-		<column name="RateOfSpread" dataType="Boolean" displayName="Rate of Spread Map"/>
-		<column name="FireIntensity" dataType="Boolean" displayName="Fire Intensity Map"/>
-		<column name="SpreadDirection" dataType="Boolean" displayName="Spread Direction Map"/>
-	</dataSheet>
-
-  <dataSheet name="OutputRateOfSpreadMap" displayName="Output Rate of Spread Map">
-		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d"/>
-		<column name="Timestep" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d" isVisible="False"/>
-		<column name="FireID" dataType="Integer"/>
-		<column name="FileName" displayName="Rate of Spread Map" dataType="String" allowDbNull="False" isExternalFile="True" isRaster="True" bandColumn="Band" filenameCode="RateOfSpread"/>
-		<column name="Band" displayName="Band" dataType="Integer" allowDbNull="True" isOptional="True"/>
-	</dataSheet>
-
-	<dataSheet name="OutputFireIntensityMap" displayName="Output Rate of Spread Map">
-		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d"/>
-		<column name="Timestep" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d" isVisible="False"/>
-		<column name="FireID" dataType="Integer"/>
-		<column name="FileName" displayName="Fire Intensity Map" dataType="String" allowDbNull="False" isExternalFile="True" isRaster="True" bandColumn="Band" filenameCode="FireIntensity"/>
-		<column name="Band" displayName="Band" dataType="Integer" allowDbNull="True" isOptional="True"/>
-	</dataSheet>
-
-  <dataSheet name="OutputSpreadDirectionMap" displayName="Output Spread Direction Map">
-		<column name="Iteration" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d"/>
-		<column name="Timestep" dataType="Integer" validationType="WholeNumber" validationCondition="GreaterEqual" formula1="0" format="d" isVisible="False"/>
-		<column name="FireID" dataType="Integer"/>
-		<column name="FileName" displayName="Spread Direction Map" dataType="String" allowDbNull="False" isExternalFile="True" isRaster="True" bandColumn="Band" filenameCode="SpreadDirection"/>
-		<column name="Band" displayName="Band" dataType="Integer" allowDbNull="True" isOptional="True"/>
-	</dataSheet>
+  <!--Scenario Datasheets-->
 
 	<!--Transformers-->
 
 	<!--Fire Growth FireSTARR Transformer-->
-	<transformer name="fireGrowthFireSTARR" isPrimary="True" displayName="3 - Grow Fires with FireSTARR" isRunnable="True" programName="Rscript" runContext="AllowRemote" isStochasticTime = "True" programArguments="growth-firestarr.R" configurationSheet="burnP3Plus_RunControl" condaEnv="burnP3Plus.yml" condaEnvVersion="2">
-		<dataSheet name="burnP3Plus_RunControl" type="Input"/>
-		<dataSheet name="burnP3Plus_FireResampleOption" type="Input"/>
-		<dataSheet name="burnP3Plus_LandscapeRasters" type="Input"/>
-		<dataSheet name="burnP3Plus_OutputOption" type="Input"/>
-		<dataSheet name="burnP3Plus_OutputOptionSpatial" type="Input"/>
-		<dataSheet name="burnP3Plus_DeterministicIgnitionCount" type="Input"/>
-		<dataSheet name="burnP3Plus_DeterministicIgnitionLocation" type="Input"/>
-		<dataSheet name="burnP3Plus_DeterministicBurnCondition" type="Input"/>
-		<dataSheet name="burnP3Plus_WindGrid" type="Input"/>
-		<dataSheet name="burnP3Plus_GreenUp" type="Both"/>
-		<dataSheet name="burnP3Plus_Curing" type="Both"/>
-		<!-- <dataSheet name="burnP3Plus_FuelLoad" type="Both"/> -->
-		<dataSheet name="burnP3Plus_OutputFireStatistic" type="Output"/>
-		<dataSheet name="burnP3Plus_OutputBurnMap" type="Output"/>
-		<dataSheet name="burnP3Plus_OutputFirePerimeter" type="Output"/>
-		<dataSheet name="burnP3Plus_OutputAllPerim" type="Output"/>
-		<dataSheet name="OutputOptionSpatial" type="Input"/>
-		<dataSheet name="OutputRateOfSpreadMap" type="Output"/>
-		<dataSheet name="OutputFireIntensityMap" type="Output"/>
-		<dataSheet name="OutputSpreadDirectionMap" type="Output"/>
+	<transformer
+    name="fireGrowthFireSTARR" 
+    displayName="3 - Grow Fires with FireSTARR"
+    programName="Rscript"
+    isStochasticTime = "True"
+    programArguments="growth-firestarr.R"
+    configurationSheet="burnP3Plus_RunControl"
+    condaEnv="burnP3Plus.yml"
+    condaEnvVersion="1">
+		  <dataSheet name="burnP3Plus_RunControl" type="Input"/>
+		  <dataSheet name="burnP3Plus_FireResampleOption" type="Input"/>
+		  <dataSheet name="burnP3Plus_LandscapeRasters" type="Input"/>
+		  <dataSheet name="burnP3Plus_OutputOption" type="Input"/>
+		  <dataSheet name="burnP3Plus_OutputOptionSpatial" type="Input"/>
+			<dataSheet name="burnP3Plus_OutputOptionFBPSpatial" type="Input"/>
+		  <dataSheet name="burnP3Plus_DeterministicIgnitionCount" type="Input"/>
+		  <dataSheet name="burnP3Plus_DeterministicIgnitionLocation" type="Input"/>
+		  <dataSheet name="burnP3Plus_DeterministicBurnCondition" type="Input"/>
+		  <dataSheet name="burnP3Plus_WindGrid" type="Input"/>
+		  <dataSheet name="burnP3Plus_GreenUp" type="Both"/>
+		  <dataSheet name="burnP3Plus_Curing" type="Both"/>
+		  <!-- <dataSheet name="burnP3Plus_FuelLoad" type="Both"/> -->
+		  <dataSheet name="burnP3Plus_OutputFireStatistic" type="Output"/>
+		  <dataSheet name="burnP3Plus_OutputBurnMap" type="Output"/>
+		  <dataSheet name="burnP3Plus_OutputFirePerimeter" type="Output"/>
+		  <dataSheet name="burnP3Plus_OutputAllPerim" type="Output"/>
+			<dataSheet name="burnP3Plus_OutputRateOfSpreadMap" type="Output"/>
+			<dataSheet name="burnP3Plus_OutputFireIntensityMap" type="Output"/>
+			<dataSheet name="burnP3Plus_OutputSpreadDirectionMap" type="Output"/>
 	</transformer>
 
-  <!--Export Transformers-->
-	<transformer name="RateOfSpreadMap" displayName="Rate of Spread Map by Iteration and Fire ID" isExport="True" dataSheet="OutputRateOfSpreadMap" column="FileName" isFolderExport="True"/>
-	<transformer name="FireIntensityMap" displayName="Fire Intensity Map by Iteration and Fire ID" isExport="True" dataSheet="OutputFireIntensityMap" column="FileName" isFolderExport="True"/>
-	<transformer name="SpreadDirectionMap" displayName="Spread Direction Map by Iteration and Fire ID" isExport="True" dataSheet="OutputSpreadDirectionMap" column="FileName" isFolderExport="True"/>
-	
 	<!--Layouts-->
-
-  <!--Results Transformer Layout-->
-	<layout type="Export">
-		<group name="Export" displayName="FireSTARR">
-			<item name="RateOfSpreadMap" displayName="Rate of Spread Maps"/>
-			<item name="FireIntensityMap" displayName="Fire Intensity Maps"/>
-			<item name="SpreadDirectionMap" displayName="Spread Direction Maps"/>
-		</group>
-	</layout>
-
-  <!--Map Layout-->
-	<layout type="Map">
-		<group name="FirestarrSecondaryOutputs" displayName="FireSTARR Secondary Outputs">
-			<item name="ros" displayName="Rate of Spread" dataSheet="OutputRateOfSpreadMap" column="FileName"/>
-			<item name="fi" displayName="Fire Intensity" dataSheet="OutputFireIntensityMap" column="FileName"/>
-      <item name="sd" displayName="Spread Direction" dataSheet="OutputSpreadDirectionMap" column="FileName"/>
-		</group>
-	</layout>
 
 	<!--Project Layout-->
 	<layout type="Project">
 		<item name="FuelCodeCrosswalk" displayName="FireSTARR Crosswalk"/>
 	</layout>
 
-  <!--Scenario Layout-->
-	<layout type="Scenario">
-		<item name="OutputOptionSpatial" displayName="Output Options" showIf="inPipeline"/>
-	</layout>
+	<updateProvider className="SyncroSim.Core.XMLUpdateProvider" classAssembly="SyncroSim.Core"/>
 
 </package>
