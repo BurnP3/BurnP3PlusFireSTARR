@@ -1,6 +1,7 @@
 # Clean global environment variables
 native_proj_lib <- Sys.getenv("PROJ_LIB")
 Sys.unsetenv("PROJ_LIB")
+options(scipen = 999)
 
 # Check and load packages ----
 library(rsyncrosim)
@@ -160,12 +161,25 @@ if (isDatasheetEmpty(Curing)) {
 #   updateRunLog("FireSTARR transformer currently does not support manually specifying Fuel Loading.", type = "warning")
 # }
 
-# Replace missing seasons with "All" to use default median date
-DeterministicIgnitionLocation <- DeterministicIgnitionLocation %>%
-  mutate(
-    Season = na_if(as.character(Season), ""),
-    Season = replace_na(Season, "All")
-  )
+# Fill missing season values
+
+# Define function to fill missing season values and save changes back to library
+fill_season <- function(datasheet, datasheet_name = "", update_library = F) {
+  datasheet <- datasheet %>%
+    mutate(
+      Season = if(!exists("Season", where = .)) NA_character_ else as.character(Season),
+      Season = replace_na(Season, "All"))
+
+  if (update_library)
+    saveDatasheet(myScenario, datasheet, datasheet_name)
+
+  return(datasheet)
+}
+
+DeterministicIgnitionLocation <- fill_season(DeterministicIgnitionLocation, "burnP3Plus_DeterministicIgnitionLocation", TRUE)
+GreenUp <- fill_season(GreenUp, "burnP3Plus_GreenUp", TRUE)
+Curing <- fill_season(Curing, "burnP3Plus_Curing", TRUE)
+# FuelLoad <- fill_season(FuelLoad, "burnP3Plus_FuelLoad", TRUE) # Currently not supported by FireSTARR
 
 if(isDatasheetEmpty(FireZoneTable))
   FireZoneTable <- data.frame(Name = "", ID = 0)
@@ -178,7 +192,7 @@ if(isDatasheetEmpty(WeatherZoneTable))
 test.point <- vect(matrix(crds(fuelsRaster)[1,],ncol=2), crs = crs(fuelsRaster))
 # Ensure fuels crs can be converted to Lat / Long
 if(test.point %>% is.lonlat){stop("Incorrect coordinate system. Projected coordinate system required, please reproject your grids.")}
-tryCatch(test.point %>% project("epsg:4326"), error = function(e) stop("Error parsing provided Fuels map. Cannot calculate Latitude and Longitude from provided Fuels map, please check CRS."))
+tryCatch(test.point %>% terra::project("epsg:4326"), error = function(e) stop("Error parsing provided Fuels map. Cannot calculate Latitude and Longitude from provided Fuels map, please check CRS."))
 
 # Define function to check input raster for consistency
 checkSpatialInput <- function(x, name, checkProjection = T, warnOnly = F) {
@@ -933,15 +947,18 @@ fireGrowthInputs <- DeterministicBurnCondition %>%
   mutate(
     Curing = map_int(Season, function(season)
       Curing %>%
-        filter(Season %in% c(season, NA)) %>%
+        dplyr::filter(Season %in% c(season, NA, "All")) %>%
+        mutate(Season = na_if(Season, "All")) %>% # Replace "All" season with NA so it sorts to end with `arrange`
         arrange(Season) %>%
         pull(Curing) %>%
         pluck(1)),
 
     GreenUp = map_lgl(Season, function(season)
       GreenUp %>%
-        filter(Season %in% c(season, NA)) %>%
-        arrange(Season) %>% pull(GreenUp) %>%
+        dplyr::filter(Season %in% c(season, NA, "All")) %>%
+        mutate(Season = na_if(Season, "All")) %>%
+        arrange(Season) %>%
+        pull(GreenUp) %>%
         pluck(1))
     ) %>%
 
