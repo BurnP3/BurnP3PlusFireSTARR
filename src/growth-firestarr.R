@@ -62,7 +62,7 @@ Curing <- datasheet(myScenario, "burnP3Plus_Curing", lookupsAsFactors = F, optio
 # FuelLoad <- datasheet(myScenario, "burnP3Plus_FuelLoad", lookupsAsFactors = F, optional = T)
 OutputOptions <- datasheet(myScenario, "burnP3Plus_OutputOption", optional = T)
 OutputOptionsSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionSpatial", optional = T)
-OutputOptionSecondarySpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionSecondarySpatial", optional = T)
+OutputOptionFBPSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionFBPSpatial", optional = T)
 FireZoneTable <- datasheet(myScenario, "burnP3Plus_FireZone")
 WeatherZoneTable <- datasheet(myScenario, "burnP3Plus_WeatherZone")
 
@@ -114,23 +114,32 @@ if(isDatasheetEmpty(OutputOptions)) {
 }
 
 if(isDatasheetEmpty(OutputOptionsSpatial)) {
-  updateRunLog("No spatial output options chosen. Defaulting to keeping all spatial outputs.", type = "info")
+  updateRunLog("No spatial output options chosen. Defaulting to keeping all spatial outputs and final burn perimeters.", type = "info")
   OutputOptionsSpatial[1,] <- rep(TRUE, length(OutputOptionsSpatial[1,]))
+  OutputOptionsSpatial$BurnPerimeter <- "Final"
   saveDatasheet(myScenario, OutputOptionsSpatial, "burnP3Plus_OutputOptionSpatial")
 } else if (any(is.na(OutputOptionsSpatial))) {
   updateRunLog("Missing one or more spatial output options. Defaulting to keeping unspecified spatial outputs.", type = "info")
   OutputOptionsSpatial <- OutputOptionsSpatial %>%
     replace(is.na(.), TRUE)
+  OutputOptionsSpatial$BurnPerimeter <- replace(OutputOptionsSpatial$BurnPerimeter, OutputOptionsSpatial$BurnPerimeter == TRUE, "Final")
   saveDatasheet(myScenario, OutputOptionsSpatial, "burnP3Plus_OutputOptionSpatial")
 }
 
-if (isDatasheetEmpty(OutputOptionSecondarySpatial)) {
-  updateRunLog("No secondary spatial output options chosen. Defaulting to keeping no secondary spatial outputs.", type = "info")
-  OutputOptionSecondarySpatial[1, ] <- rep(FALSE, length(OutputOptionSecondarySpatial[1, ]))
-  saveDatasheet(myScenario, OutputOptionSecondarySpatial, "burnP3Plus_OutputOptionSecondarySpatial")
+if (isDatasheetEmpty(OutputOptionFBPSpatial)) {
+  updateRunLog("No FBP spatial output options chosen. Defaulting to keeping no FBP spatial outputs.", type = "info")
+  OutputOptionFBPSpatial[1, ] <- rep(FALSE, length(OutputOptionFBPSpatial[1, ]))
+  saveDatasheet(myScenario, OutputOptionFBPSpatial, "burnP3Plus_OutputOptionFBPSpatial")
 } else {
+  if (any(is.na(OutputOptionFBPSpatial))) {
+    updateRunLog("Missing one or more FBP spatial output options. Defaulting to not keeping unspecified spatial FBP outputs.", type = "info")
+    OutputOptionFBPSpatial <- OutputOptionFBPSpatial %>%
+      replace(is.na(.), FALSE)
+    saveDatasheet(myScenario, OutputOptionFBPSpatial, "burnP3Plus_OutputOptionFBPSpatial")
+  }
+
   # Check if any unsupported outputs are chosen
-  if(OutputOptionSecondarySpatial %>%
+  if(OutputOptionFBPSpatial %>%
      dplyr::select(-RateOfSpread, -FireIntensity, -SpreadDirection) %>%
      slice(1) %>%
      any(na.rm = T))
