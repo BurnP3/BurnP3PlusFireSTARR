@@ -143,7 +143,7 @@ if (isDatasheetEmpty(OutputOptionFBPSpatial)) {
      dplyr::select(-RateOfSpread, -FireIntensity, -SpreadDirection) %>%
      slice(1) %>%
      any(na.rm = T))
-    updateRunLog("FireSTARR currently only produces Rate of Spread, Fire Intensity, and Spread Direction secondary burn maps. Other secondary burn options will be ignored.", type = "warning")
+    updateRunLog("FireSTARR currently only produces Rate of Spread, Fire Intensity, and Spread Direction FBP burn maps. Other spatial FBP output options will be ignored.", type = "warning")
 }
 
 
@@ -1199,7 +1199,7 @@ if(OutputOptionsSpatial$AllPerim | (saveBurnMaps & minimumFireSize > 0)){
 ## Burn perimeters ----
 if(OutputOptionsSpatial$BurnPerimeter != "No") {
   progressBar(type = "message", message = "Saving burn perimeters...")
-  OutputBurnPerimeter <-
+  OutputFirePerimeter <-
     tibble(
       FileName = geopackage_path %>% normalizePath(),
       Description = 
@@ -1210,7 +1210,7 @@ if(OutputOptionsSpatial$BurnPerimeter != "No") {
     ) %>%
     as.data.frame()
 
-  saveDatasheet(myScenario, OutputBurnPerimeter, "burnP3Plus_OutputFirePerimeter")
+  saveDatasheet(myScenario, OutputFirePerimeter, "burnP3Plus_OutputFirePerimeter")
   updateRunLog("Finished collecting burn perimeters in ", updateBreakpoint())
 }
 
