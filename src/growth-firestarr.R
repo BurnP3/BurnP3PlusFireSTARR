@@ -577,7 +577,7 @@ runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, numDays, Sea
   # Log arguemnts used for run
   fwrite(list(c(str_c("./", firestarrExecutable), firestarr_args)), "fs-arguments.log", eol = " ")
 
-  system2(firestarrExecutable, firestarr_args)
+  system2(firestarrExecutable, firestarr_args, stdout = FALSE) # For debugging, consider saving stdout to file instead
 }
 
 runFireSTARRBatch <- function(ignitionData) {
