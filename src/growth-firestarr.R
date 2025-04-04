@@ -300,7 +300,8 @@ saveBurnMaps <- any(OutputOptionsSpatial$BurnMap, OutputOptionsSpatial$SeasonalB
                     OutputOptionsSpatial$BurnProbability, OutputOptionsSpatial$SeasonalBurnProbability,
                     OutputOptionsSpatial$RelativeBurnProbability, OutputOptionsSpatial$SeasonalRelativeBurnProbability,
                     OutputOptionsSpatial$BurnCount, OutputOptionsSpatial$SeasonalBurnCount,
-                    OutputOptionsSpatial$AllPerim)
+                    OutputOptionsSpatial$AllPerim, OutputOptionFBPSpatial,
+                    OutputOptionsSpatial$BurnPerimeter != "No") # Note that FireSTARR must produce raster outputs in order for them to be vectorized
 
 # Decide whether or not to save outputs seasonally
 saveSeasonalBurnMaps <- any(OutputOptionsSpatial$SeasonalBurnMap,
