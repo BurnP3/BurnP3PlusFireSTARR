@@ -373,33 +373,48 @@ if(.Platform$OS.type == "unix")
 # Find look up for internal fuel names
 InternalFuelNameFile <- file.path(ssimEnvironment()$PackageDirectory, "Internal Fuel Names.csv")
 
-weatherFolder <- "weathers"
-unlink(weatherFolder, recursive = T, force = T)
-dir.create(weatherFolder, showWarnings = F)
-
 # Set names for model input files
 fuelsRasterFile     <- file.path(tempDir, "rasters", "default", "fuel_16_0.tif")
 elevationRasterFile <- file.path(tempDir, "rasters", "default", "dem_16_0.tif")
 fuelLookupFile      <- file.path(tempDir, "fuel.lut")
 
 # Create folders for various outputs
+weatherFolder <- "weathers"
 gridOutputFolder <- "outputs"
 shapeOutputFolder <- "shapes"
 accumulatorOutputFolder <- "accumulator"
 seasonalAccumulatorOutputFolder <- "accumulator-seasonal"
 allPerimOutputFolder <- "allperim"
 secondaryOutputFolder <- "secondary"
+unlink(weatherFolder, recursive = T, force = T)
 unlink(gridOutputFolder, recursive = T, force = T)
 unlink(shapeOutputFolder, recursive = T, force = T)
 unlink(accumulatorOutputFolder, recursive = T, force = T)
 unlink(allPerimOutputFolder, recursive = T, force = T)
 unlink(secondaryOutputFolder, recursive = T, force = T)
+dir.create(weatherFolder, showWarnings = F)
 dir.create(gridOutputFolder, showWarnings = F)
 dir.create(shapeOutputFolder, showWarnings = F)
 dir.create(accumulatorOutputFolder, showWarnings = F)
 dir.create(seasonalAccumulatorOutputFolder, showWarnings = F)
 dir.create(allPerimOutputFolder, showWarnings = F)
 dir.create(secondaryOutputFolder, showWarnings = F)
+
+# Create path for geopackage for storing vector outputs
+# - Having a unique name for each job (if multiprocessed) helps organize things during merge
+geopackage_path <- 
+  str_c(
+    "burn-perimeters",
+    ifelse(runContext$isParallel, str_c("-", runContext$jobIndex), "")) %>%
+  str_c(".gpkg") %>%
+  file.path(shapeOutputFolder, .)
+
+# Note geopackage recommends `_` for word separation in table, feature, etc names
+geopackage_layer_name <-
+  str_c(
+    str_to_lower(OutputOptionsSpatial$BurnPerimeter),
+    "_burn_perimeters"
+  )
 
 ## Function Definitions ----
 
@@ -719,16 +734,26 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
                     datatype = "INT4S",
                     gdal = c("COMPRESS=DEFLATE","ZLEVEL=9","PREDICTOR=2")))
         
-        if(OutputOptionsSpatial$BurnPerimeter) {
+        if(OutputOptionsSpatial$BurnPerimeter == "Final") {
           burnArea %>%
             # Trim down to only burned area by first converting all non-burned pixels to NA
             classify(matrix(c(0, NA), ncol = 2)) %>%
             trim() %>%
-            # Convert and samve
+            # Convert and save
             as.polygons() %>%
-            writeVector(str_c(shapeOutputFolder, "/it", Iteration,"_fire", FireIDs[i], ".shp"),
-              overwrite = T
-            )
+            st_as_sf() %>%
+            st_cast("MULTIPOLYGON") %>%
+            mutate(
+              iteration = Iteration,
+              fire_id = FireIDs[i],
+              geometry = geometry,
+              .keep = "none"
+              ) %>%
+            st_write(
+              dsn = geopackage_path,
+              layer = geopackage_layer_name,
+              quiet = TRUE,
+              append = TRUE)
         }
 
         # Save requested secondary outputs
@@ -741,7 +766,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
           if (length(inputComponentFileName) > 0) {
             # Generate output file name
             outputComponentFileName <- str_c(secondaryOutputFolder, "/it", Iteration,"_fire", FireIDs[i], "_", lookup(component, outputComponentNames, outputComponentCleanSuffix), ".tif") %>%
-              normalizePath()
+              normalizePath(mustWork = F)
 
             # Rewrite as GeoTiff to output folder
             rast(inputComponentFileName) %>%
@@ -816,16 +841,26 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
                     gdal = c("COMPRESS=DEFLATE","ZLEVEL=9","PREDICTOR=2")))
       }
 
-      if(OutputOptionsSpatial$BurnPerimeter) {
+      if(OutputOptionsSpatial$BurnPerimeter == "Final") {
         burnArea %>%
           # Trim down to only burned area by first converting all non-burned pixels to NA
           classify(matrix(c(0, NA), ncol = 2)) %>%
           trim() %>%
-          # Convert and samve
+          # Convert and save
           as.polygons() %>%
-          writeVector(str_c(shapeOutputFolder, "/it", Iteration,"_fire", FireIDs[i], ".shp"),
-            overwrite = T
-          )
+          st_as_sf() %>%
+          st_cast("MULTIPOLYGON") %>%
+          mutate(
+            iteration = Iteration,
+            fire_id = FireIDs[i],
+            geometry = geometry,
+            .keep = "none"
+            ) %>%
+          st_write(
+            dsn = geopackage_path,
+            layer = geopackage_layer_name,
+            quiet = TRUE,
+            append = TRUE)
       }
 
       # Save requested secondary outputs
@@ -838,7 +873,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
         if (length(inputComponentFileName) > 0) {
           # Generate output file name
           outputComponentFileName <- str_c(secondaryOutputFolder, "/it", Iteration,"_fire", FireIDs[i], "_", lookup(component, outputComponentNames, outputComponentCleanSuffix), ".tif") %>%
-            normalizePath()
+            normalizePath(mustWork = F)
 
           # Rewrite as GeoTiff to output folder
           rast(inputComponentFileName) %>%
@@ -938,7 +973,7 @@ ignitionLocation <- DeterministicIgnitionLocation %>%
 
 # Decide which burn components to keep
 # - Parse table
-outputComponentsToKeep <- OutputOptionSecondarySpatial %>%
+outputComponentsToKeep <- OutputOptionFBPSpatial %>%
   pivot_longer(-starts_with(c("Scenario", "Project", "Parent")), names_to = "component", values_to = "keep") %>%
   filter(keep) %>%
   pull(component)
@@ -1162,25 +1197,20 @@ if(OutputOptionsSpatial$AllPerim | (saveBurnMaps & minimumFireSize > 0)){
 
 
 ## Burn perimeters ----
-if(OutputOptionsSpatial$BurnPerimeter) {
+if(OutputOptionsSpatial$BurnPerimeter != "No") {
   progressBar(type = "message", message = "Saving burn perimeters...")
   OutputBurnPerimeter <-
     tibble(
-      FileName = list.files(shapeOutputFolder, pattern = "*.shp", full.names = T) %>% normalizePath(),
-      Tag = str_extract(FileName, "it\\d+_fire\\d+"),
-      Iteration = str_extract(Tag, "it\\d+") %>% str_extract("\\d+") %>% as.integer(),
-      FireID = str_extract(Tag, "fire\\d+") %>% str_extract("\\d+") %>% as.integer(),
-      Timestep = 0
+      FileName = geopackage_path %>% normalizePath(),
+      Description = 
+        str_c(
+          OutputOptionsSpatial$BurnPerimeter,
+          " burn perimeters", 
+          ifelse(runContext$isParallel, str_c(" - Job ", runContext$jobIndex), ""))
     ) %>%
-    filter(Iteration %in% iterations | (Iteration == 0 & FireID %in% extraIgnitionIDs)) %>%
-    dplyr::select(-Tag) %>%
     as.data.frame()
 
-  # Output if there are records to save
-  if (!isDatasheetEmpty(OutputBurnPerimeter)) {
-    saveDatasheet(myScenario, OutputBurnPerimeter, "burnP3Plus_OutputFirePerimeter")
-  }
-
+  saveDatasheet(myScenario, OutputBurnPerimeter, "burnP3Plus_OutputFirePerimeter")
   updateRunLog("Finished collecting burn perimeters in ", updateBreakpoint())
 }
 
