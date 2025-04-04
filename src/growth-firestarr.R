@@ -555,7 +555,7 @@ runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, numDays, Sea
 
   # Get median date of current season for ignition date
   ignDate <- getSeasonMedianDate(Season) %>%
-    lubridate::stamp("1999-12-31")() # yyyy-mm-dd is expected by FireSTARR
+    format("%Y-%m-%d") # yyyy-mm-dd is expected by FireSTARR
   
   firestarr_args <- 
     c(outputFolder,
