@@ -61,7 +61,7 @@ GreenUp <- datasheet(myScenario, "burnP3Plus_GreenUp", lookupsAsFactors = F, opt
 Curing <- datasheet(myScenario, "burnP3Plus_Curing", lookupsAsFactors = F, optional = T)
 # FuelLoad <- datasheet(myScenario, "burnP3Plus_FuelLoad", lookupsAsFactors = F, optional = T)
 OutputOptions <- datasheet(myScenario, "burnP3Plus_OutputOption", optional = T)
-OutputOptionsSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionSpatial", optional = T)
+OutputOptionsSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionSpatial", optional = T) %>% mutate(BurnPerimeter = as.character(BurnPerimeter))
 OutputOptionFBPSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionFBPSpatial", optional = T)
 FireZoneTable <- datasheet(myScenario, "burnP3Plus_FireZone")
 WeatherZoneTable <- datasheet(myScenario, "burnP3Plus_WeatherZone")
@@ -442,6 +442,13 @@ updateBreakpoint <- function() {
 # Define a function to facilitate recoding values using a lookup table
 lookup <- function(x, old, new) dplyr::recode(x, !!!set_names(new, old))
 
+# FS outputs don't always have exactly the same CRS as the inputs even though things don't get reprojected
+# - this utitily function overrides (not projects) the crs quietly and returns the object (for piping)
+set_crs <- function(x, template_crs) {
+  crs(x) <- template_crs
+  return(x)
+}
+
 # Function to delete files in file
 resetFolder <- function(path) {
   list.files(path, full.names = T) %>%
@@ -502,6 +509,9 @@ alignOutputs <- function(x, template, binarize = T) {
 
 # Get burn area from output csv
 getBurnArea <- function(inputFile) {
+  # Handle vector of inputs in case outputs were were produced daily
+  inputFile <- tail(inputFile, 1)
+
   # Handle failed burns
   if (is.na(inputFile)) return(0)
 
@@ -573,6 +583,10 @@ runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, numDays, Sea
   ignDate <- getSeasonMedianDate(Season) %>%
     format("%Y-%m-%d") # yyyy-mm-dd is expected by FireSTARR
   
+  # Generate outputs daily if daily burn perimeters are required, otherwise just produce final outputs
+  if(OutputOptionsSpatial$BurnPerimeter == "Daily")
+    numDays <- seq(numDays)
+  
   firestarr_args <- 
     c(outputFolder,
       ignDate, 
@@ -581,7 +595,7 @@ runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, numDays, Sea
       "--ffmc", FFMC,
       "--dmc", DMC,
       "--dc", DC,
-      "--output_date_offsets", str_c("[", numDays, "]"),
+      "--output_date_offsets", str_c("[", str_c(numDays, collapse = ","), "]"),
       "--raster-root rasters",
       "-s --occurrence --no-intensity --no-probability --deterministic",
       if(keepSecondaries) "-i" else NULL, # The individual burn map flag (-i) is used to generate all secondary outputs
@@ -628,7 +642,8 @@ runBatch <- function(batchInputs) {
   
   # Get relative paths to all raw outputs
   rawOutputGridPaths <- list.dirs(gridOutputFolder)[-1] %>%
-    map_chr(~ .x %>% list.files("occurrence_.*tif$", full.names = T) %>% append(NA, after = 0) %>% tail(1))
+    map(~ .x %>% list.files("occurrence_.*tif$", full.names = T)) %>%
+    map(~ if (length(.x) == 0) {return(NA)} else return(.x)) # Catch zero length outputs just in case
   
   # Get burn areas
   burnAreas <- getBurnAreas(rawOutputGridPaths)
@@ -722,8 +737,8 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
   # For iteration zero (fires for resampling), only save individual burn maps and secondary outputs
   if(Iteration == 0) {
     for(i in seq_along(UniqueFireIDs)){
-      if(!is.na(UniqueFireIDs[i]) & !is.na(burnGrids[UniqueFireIDs[i]]) ){
-        burnArea <- rast(burnGrids[UniqueFireIDs[i]]) %>% 
+      if(!is.na(UniqueFireIDs[i]) & !is.na(burnGrids[[UniqueFireIDs[i]]] %>% append(NA, after = 0) %>% tail(1)) ){
+        burnArea <- rast(burnGrids[[UniqueFireIDs[i]]] %>% tail(1)) %>% 
           alignOutputs(fuelsRaster)
 
         burnArea %>%
@@ -742,8 +757,10 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
             trim() %>%
             # Convert and save
             as.polygons() %>%
+            set_crs(crs(fuelsRaster)) %>%
             st_as_sf() %>%
             st_cast("MULTIPOLYGON") %>%
+            st_make_valid() %>%
             mutate(
               iteration = Iteration,
               fire_id = FireIDs[i],
@@ -757,10 +774,52 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
               append = TRUE)
         }
 
+        if(OutputOptionsSpatial$BurnPerimeter == "Daily") {
+          # For daily perimeters, iterate over daily burn maps to generate burn perimeters
+          burn_to_date <- NULL
+          for (j in seq_along(burnGrids[[UniqueFireIDs[i]]])) {
+            # Update yesterday's burn
+            burn_yesterday <- burn_to_date
+
+            # Vectorize current day's grid
+            burn_to_date <- rast(burnGrids[[UniqueFireIDs[i]]][j]) %>%
+              trim() %>% 
+              as.polygons() %>%
+              set_crs(crs(fuelsRaster)) %>%
+              st_as_sf() %>%
+              st_cast("MULTIPOLYGON") %>%
+              st_make_valid() %>%
+              mutate(
+                iteration = Iteration,
+                fire_id = FireIDs[i],
+                burn_day = j,
+                geometry = geometry,
+                .keep = "none")
+            
+            # Subtract previous days burn if not the first day
+            if (j == 1) {
+              burn_today <- burn_to_date
+            } else {
+              st_agr(burn_to_date) = "constant"
+              burn_today <- burn_to_date %>%
+                st_difference(st_geometry(burn_yesterday))
+            }
+
+            # Save output
+            st_write(
+              obj = burn_today,
+              dsn = geopackage_path,
+              layer = geopackage_layer_name,
+              quiet = TRUE,
+              append = TRUE)
+          }
+        }
+
         # Save requested secondary outputs
         for (component in outputComponentsToKeep) {
           # Find the correct secondary output in the same folder as the burn grid
-          inputComponentFileName <- burnGrids[UniqueFireIDs[i]] %>%
+          inputComponentFileName <- burnGrids[[UniqueFireIDs[i]]] %>%
+            tail(1) %>%
             dirname() %>%
             list.files(pattern = str_c("^\\d.*", lookup(component, outputComponentNames, outputComponentRawSuffix), ".tif$"), full.names = T) %>%
             tail(1)
@@ -817,9 +876,9 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
   
   # Combine burn grids
   for(i in seq_along(UniqueFireIDs)){
-    if(!is.na(UniqueFireIDs[i]) & !is.na(burnGrids[UniqueFireIDs[i]]) ){
+    if(!is.na(UniqueFireIDs[i]) & !is.na(burnGrids[[UniqueFireIDs[i]]] %>% append(NA, after = 0)  %>% tail(1)) ){
       # Read in and add current burn map
-      burnArea <- rast(burnGrids[UniqueFireIDs[i]]) %>%
+      burnArea <- rast(burnGrids[[UniqueFireIDs[i]]] %>% tail(1)) %>%
         alignOutputs(fuelsRaster)
         
       accumulator <- sum(accumulator, burnArea, na.rm = T)
@@ -849,8 +908,10 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
           trim() %>%
           # Convert and save
           as.polygons() %>%
+          set_crs(crs(fuelsRaster)) %>%
           st_as_sf() %>%
           st_cast("MULTIPOLYGON") %>%
+          st_make_valid() %>%
           mutate(
             iteration = Iteration,
             fire_id = FireIDs[i],
@@ -864,10 +925,52 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
             append = TRUE)
       }
 
+      if(OutputOptionsSpatial$BurnPerimeter == "Daily") {
+        # For daily perimeters, iterate over daily burn maps to generate burn perimeters
+        burn_to_date <- NULL
+        for (j in seq_along(burnGrids[[UniqueFireIDs[i]]])) {
+          # Update yesterday's burn
+          burn_yesterday <- burn_to_date
+
+          # Vectorize current day's grid
+          burn_to_date <- rast(burnGrids[[UniqueFireIDs[i]]][j]) %>%
+            trim() %>% 
+            as.polygons() %>%
+            set_crs(crs(fuelsRaster)) %>%
+            st_as_sf() %>%
+            st_cast("MULTIPOLYGON") %>%
+            st_make_valid() %>%
+            mutate(
+              iteration = Iteration,
+              fire_id = FireIDs[i],
+              burn_day = j,
+              geometry = geometry,
+              .keep = "none")
+          
+          # Subtract previous days burn if not the first day
+          if (j == 1) {
+            burn_today <- burn_to_date
+          } else {
+            st_agr(burn_to_date) = "constant"
+            burn_today <- burn_to_date %>%
+              st_difference(st_geometry(burn_yesterday))
+          }
+
+          # Save output
+          st_write(
+            obj = burn_today,
+            dsn = geopackage_path,
+            layer = geopackage_layer_name,
+            quiet = TRUE,
+            append = TRUE)
+        }
+      }
+
       # Save requested secondary outputs
       for (component in outputComponentsToKeep) {
         # Find the correct secondary output in the same folder as the burn grid
-        inputComponentFileName <- burnGrids[UniqueFireIDs[i]] %>%
+        inputComponentFileName <- burnGrids[[UniqueFireIDs[i]]] %>%
+          tail(1) %>%
           dirname() %>%
           list.files(pattern = str_c("^\\d.*", lookup(component, outputComponentNames, outputComponentRawSuffix), ".tif$"), full.names = T) %>%
           tail(1)
@@ -1200,6 +1303,7 @@ if(OutputOptionsSpatial$AllPerim | (saveBurnMaps & minimumFireSize > 0)){
 ## Burn perimeters ----
 if(OutputOptionsSpatial$BurnPerimeter != "No") {
   progressBar(type = "message", message = "Saving burn perimeters...")
+
   OutputFirePerimeter <-
     tibble(
       FileName = geopackage_path %>% normalizePath(),
