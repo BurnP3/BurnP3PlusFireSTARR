@@ -762,8 +762,8 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
             st_cast("MULTIPOLYGON") %>%
             st_make_valid() %>%
             mutate(
-              iteration = Iteration,
-              fire_id = FireIDs[i],
+              Iteration = Iteration,
+              FireID = FireIDs[i],
               geometry = geometry,
               .keep = "none"
               ) %>%
@@ -790,9 +790,9 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
               st_cast("MULTIPOLYGON") %>%
               st_make_valid() %>%
               mutate(
-                iteration = Iteration,
-                fire_id = FireIDs[i],
-                burn_day = j,
+                Iteration = Iteration,
+                FireID = FireIDs[i],
+                BurnDay = j,
                 geometry = geometry,
                 .keep = "none")
             
@@ -913,8 +913,8 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
           st_cast("MULTIPOLYGON") %>%
           st_make_valid() %>%
           mutate(
-            iteration = Iteration,
-            fire_id = FireIDs[i],
+            Iteration = Iteration,
+            FireID = FireIDs[i],
             geometry = geometry,
             .keep = "none"
             ) %>%
@@ -941,9 +941,9 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
             st_cast("MULTIPOLYGON") %>%
             st_make_valid() %>%
             mutate(
-              iteration = Iteration,
-              fire_id = FireIDs[i],
-              burn_day = j,
+              Iteration = Iteration,
+              FireID = FireIDs[i],
+              BurnDay = j,
               geometry = geometry,
               .keep = "none")
           
