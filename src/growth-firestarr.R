@@ -56,13 +56,14 @@ FuelType <- datasheet(myScenario, "burnP3Plus_FuelType", lookupsAsFactors = F)
 FuelTypeCrosswalk <- datasheet(myScenario, "burnP3PlusFireSTARR_FuelCodeCrosswalk", lookupsAsFactors = F, optional = T)
 ValidFuelCodes <- datasheet(myScenario, "burnP3PlusFireSTARR_FuelCode") %>% pull()
 SeasonTable <- datasheet(myScenario, "burnP3Plus_Season", lookupsAsFactors = F, optional = T, includeKey = T, returnInvisible = T)
+FBPVariableTable <- datasheet(myScenario, "burnP3Plus_FBPOutputVariable", lookupsAsFactors = F, optional = T, returnInvisible = T)
 WindGrid <- datasheet(myScenario, "burnP3Plus_WindGrid", lookupsAsFactors = F, optional = T)
 GreenUp <- datasheet(myScenario, "burnP3Plus_GreenUp", lookupsAsFactors = F, optional = T)
 Curing <- datasheet(myScenario, "burnP3Plus_Curing", lookupsAsFactors = F, optional = T)
 # FuelLoad <- datasheet(myScenario, "burnP3Plus_FuelLoad", lookupsAsFactors = F, optional = T)
 OutputOptions <- datasheet(myScenario, "burnP3Plus_OutputOption", optional = T)
 OutputOptionsSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionSpatial", optional = T) %>% mutate(BurnPerimeter = as.character(BurnPerimeter))
-OutputOptionFBPSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionFBPSpatial", optional = T)
+OutputOptionFBPSpatial <- datasheet(myScenario, "burnP3Plus_OutputOptionFBPSpatial", optional = T, returnInvisible = T) %>% mutate(Variable = as.character(Variable))
 FireZoneTable <- datasheet(myScenario, "burnP3Plus_FireZone")
 WeatherZoneTable <- datasheet(myScenario, "burnP3Plus_WeatherZone")
 
@@ -126,26 +127,34 @@ if(isDatasheetEmpty(OutputOptionsSpatial)) {
   saveDatasheet(myScenario, OutputOptionsSpatial, "burnP3Plus_OutputOptionSpatial")
 }
 
-if (isDatasheetEmpty(OutputOptionFBPSpatial)) {
-  updateRunLog("No FBP spatial output options chosen. Defaulting to keeping no FBP spatial outputs.", type = "info")
-  OutputOptionFBPSpatial[1, ] <- rep(FALSE, length(OutputOptionFBPSpatial[1, ]))
-  saveDatasheet(myScenario, OutputOptionFBPSpatial, "burnP3Plus_OutputOptionFBPSpatial")
-} else {
-  if (any(is.na(OutputOptionFBPSpatial))) {
-    updateRunLog("Missing one or more FBP spatial output options. Defaulting to not keeping unspecified spatial FBP outputs.", type = "info")
-    OutputOptionFBPSpatial <- OutputOptionFBPSpatial %>%
-      replace(is.na(.), FALSE)
-    saveDatasheet(myScenario, OutputOptionFBPSpatial, "burnP3Plus_OutputOptionFBPSpatial")
-  }
-
+if (!isDatasheetEmpty(OutputOptionFBPSpatial)) {
   # Check if any unsupported outputs are chosen
   if(OutputOptionFBPSpatial %>%
-     dplyr::select(-RateOfSpread, -FireIntensity, -SpreadDirection) %>%
-     slice(1) %>%
-     any(na.rm = T))
+     pull(Variable) %>%
+     str_detect("Rate of Spread|Fire Intensity|Direction", negate = T) %>%
+     any)
     updateRunLog("FireSTARR currently only produces Rate of Spread, Fire Intensity, and Spread Direction FBP burn maps. Other spatial FBP output options will be ignored.", type = "warning")
-}
 
+  # Fill missing values for all but Percentile outputs, which are left as NA to indicate non-use
+  OutputOptionFBPSpatial <- OutputOptionFBPSpatial %>%
+    mutate(across(
+      any_of(c("Average", "Minimum", "Maximum", "Median", "Individual")),
+      \(x) replace_na(x, FALSE)))
+  
+  saveDatasheet(myScenario, OutputOptionFBPSpatial, "burnP3Plus_OutputOptionFBPSpatial")
+
+  # Parse table to determine which outputs should be generated
+  outputComponentsToKeepDisplayName <- OutputOptionFBPSpatial %>%
+    dplyr::filter(any(Average, Minimum, Maximum, Median, Individual, as.logical(c(Percentile1, Percentile2, Percentile3)))) %>%
+    pull(Variable)
+
+  # Set a flag to decide whether or not to handle secondary outputs
+  keepSecondaries <- length(outputComponentsToKeepDisplayName) > 0
+} else {
+  # Set flags to not save FBP outputs
+  outputComponentsToKeepDisplayName <- character(0)
+  keepSecondaries <- F
+}
 
 if(isDatasheetEmpty(BatchOption)) {
   updateRunLog("No batch size chosen. Defaulting to batches of 250 iterations.", type = "info")
@@ -300,7 +309,7 @@ saveBurnMaps <- any(OutputOptionsSpatial$BurnMap, OutputOptionsSpatial$SeasonalB
                     OutputOptionsSpatial$BurnProbability, OutputOptionsSpatial$SeasonalBurnProbability,
                     OutputOptionsSpatial$RelativeBurnProbability, OutputOptionsSpatial$SeasonalRelativeBurnProbability,
                     OutputOptionsSpatial$BurnCount, OutputOptionsSpatial$SeasonalBurnCount,
-                    OutputOptionsSpatial$AllPerim, OutputOptionFBPSpatial,
+                    OutputOptionsSpatial$AllPerim, keepSecondaries,
                     OutputOptionsSpatial$BurnPerimeter != "No") # Note that FireSTARR must produce raster outputs in order for them to be vectorized
 
 # Decide whether or not to save outputs seasonally
@@ -1076,14 +1085,9 @@ ignitionLocation <- DeterministicIgnitionLocation %>%
   arrange("Iteration", "FireID")
 
 # Decide which burn components to keep
-# - Parse table
-outputComponentsToKeep <- OutputOptionFBPSpatial %>%
-  pivot_longer(-starts_with(c("Scenario", "Project", "Parent")), names_to = "component", values_to = "keep") %>%
-  filter(keep) %>%
-  pull(component)
-
-# Set a flag to decide whether or not to handle secondary outputs
-keepSecondaries <- length(outputComponentsToKeep) > 0
+# - Convert from display name from UI to internal component names
+outputComponentsToKeep <- outputComponentsToKeepDisplayName %>%
+  lookup(FBPVariableTable$DisplayName, FBPVariableTable$Name)
 
 # - Initialize list of tables to hold outputs
 outputComponentTables <- list()
