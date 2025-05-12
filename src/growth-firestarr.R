@@ -769,6 +769,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
             set_crs(crs(fuelsRaster)) %>%
             st_as_sf() %>%
             st_cast("MULTIPOLYGON") %>%
+            st_buffer(0) %>% # Prevent specific invalidity case that st_make_valid doesn't catch
             st_make_valid() %>%
             mutate(
               Iteration = Iteration,
@@ -797,6 +798,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
               set_crs(crs(fuelsRaster)) %>%
               st_as_sf() %>%
               st_cast("MULTIPOLYGON") %>%
+              st_buffer(0) %>% # Prevent specific invalidity case that st_make_valid doesn't catch
               st_make_valid() %>%
               mutate(
                 Iteration = Iteration,
@@ -920,6 +922,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
           set_crs(crs(fuelsRaster)) %>%
           st_as_sf() %>%
           st_cast("MULTIPOLYGON") %>%
+          st_buffer(0) %>% # Prevent specific invalidity case that st_make_valid doesn't catch
           st_make_valid() %>%
           mutate(
             Iteration = Iteration,
@@ -948,6 +951,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
             set_crs(crs(fuelsRaster)) %>%
             st_as_sf() %>%
             st_cast("MULTIPOLYGON") %>%
+            st_buffer(0) %>% # Prevent specific invalidity case that st_make_valid doesn't catch
             st_make_valid() %>%
             mutate(
               Iteration = Iteration,
