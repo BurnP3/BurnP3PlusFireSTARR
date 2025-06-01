@@ -373,8 +373,15 @@ if(.Platform$OS.type == "unix") {
   firestarrExecutable <- "tbd.exe"
 }
 firestarrSettings <- "settings.ini"
-file.copy(file.path(ssimEnvironment()$PackageDirectory, firestarrExecutable), tempDir, overwrite = T)
-file.copy(file.path(ssimEnvironment()$PackageDirectory, firestarrSettings), tempDir, overwrite = T)
+
+fsExecutablePath <- file.path(ssimEnvironment()$PackageDirectory, firestarrExecutable)
+fsSettingsPath <- file.path(ssimEnvironment()$PackageDirectory, firestarrSettings)
+
+if(!file.exists(fsExecutablePath) | !file.exists(fsSettingsPath))
+  stop("Could not find the FireSTARR executable or settings file within the BP3+ FireSTARR package folder. Please reinstall the package.")
+
+file.copy(, tempDir, overwrite = T)
+file.copy(, tempDir, overwrite = T)
 
 # Set as executable if in linux
 if(.Platform$OS.type == "unix")
@@ -1323,7 +1330,9 @@ if(OutputOptionsSpatial$BurnPerimeter != "No") {
     ) %>%
     as.data.frame()
 
-  saveDatasheet(myScenario, OutputFirePerimeter, "burnP3Plus_OutputFirePerimeter")
+  if(file.exists(geopackage_path))
+    saveDatasheet(myScenario, OutputFirePerimeter, "burnP3Plus_OutputFirePerimeter")
+
   updateRunLog("Finished collecting burn perimeters in ", updateBreakpoint())
 }
 
