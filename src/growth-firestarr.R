@@ -380,8 +380,8 @@ fsSettingsPath <- file.path(ssimEnvironment()$PackageDirectory, firestarrSetting
 if(!file.exists(fsExecutablePath) | !file.exists(fsSettingsPath))
   stop("Could not find the FireSTARR executable or settings file within the BP3+ FireSTARR package folder. Please reinstall the package.")
 
-file.copy(, tempDir, overwrite = T)
-file.copy(, tempDir, overwrite = T)
+file.copy(fsExecutablePath, tempDir, overwrite = T)
+file.copy(fsSettingsPath, tempDir, overwrite = T)
 
 # Set as executable if in linux
 if(.Platform$OS.type == "unix")
