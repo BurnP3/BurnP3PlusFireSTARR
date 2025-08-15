@@ -8,8 +8,9 @@ library(rsyncrosim)
 suppressPackageStartupMessages(library(tidyverse))
 suppressPackageStartupMessages(library(lubridate))
 suppressPackageStartupMessages(library(terra))
-suppressPackageStartupMessages(library(data.table))
 suppressPackageStartupMessages(library(sf))
+suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(arrow))
 
 checkPackageVersion <- function(packageString, minimumVersion){
   result <- compareVersion(as.character(packageVersion(packageString)), minimumVersion)
@@ -433,6 +434,23 @@ geopackage_layer_name <-
     "_burn_perimeters"
   )
 
+# Create path for parquet files to hold tabular per-fire burn metrics
+allPerimTablePath <- 
+  str_c(
+    "all-perim-tabular",
+    ifelse(runContext$isParallel, str_c("-", runContext$jobIndex), "")) %>%
+  str_c(".parquet") %>%
+  file.path(allPerimOutputFolder, .)
+
+fbpTablePath <- 
+  str_c(
+    "fbp-tabular",
+    ifelse(runContext$isParallel, str_c("-", runContext$jobIndex), "")) %>%
+  str_c(".parquet") %>%
+  file.path(secondaryOutputFolder, .)
+
+tempTablePath <- "temp.parquet"
+
 ## Function Definitions ----
 
 ### Convenience and conversion functions ----
@@ -567,6 +585,44 @@ getResampleStatus <- function(burnSummary) {
     return()
 }
 
+# Function to consolidate raw tabular outputs per batch 
+consolidateTabularOutputs <- function() {
+  # Per-fire burn locations ----
+  # Read in raw individual burn perimeter data from current batch and save to parquet
+  fread(str_c(allPerimTablePath, ".csv")) %>%
+    arrow::write_parquet(sink = tempTablePath)
+
+  # Combine with previous tabular data, if present
+  c(allPerimTablePath, tempTablePath) %>%
+    `[`(file.exists(.)) %>% # This drops the all perim parquet file if it does not exist yet
+    arrow::open_dataset() %>%
+    arrow::write_parquet(sink = allPerimTablePath)
+
+  # Reset CSV File
+  writeLines(
+    "Iteration,FireID,CellID",
+    str_c(allPerimTablePath, ".csv"))
+
+  # Per-fire FBP data ----
+  # Reshape outputs from the current batch into the temp table
+  fread(str_c(fbpTablePath, ".csv")) %>%
+    dcast(Iteration + FireID + CellID ~ Component, value.var = "Value") %>%
+    arrow::write_parquet(sink = tempTablePath)
+
+  # Combine with previous FBP outputs, if present
+  c(fbpTablePath, tempTablePath) %>%
+    `[`(file.exists(.)) %>% # This drops the fbp parquet file if it does not exist yet
+    arrow::open_dataset() %>%
+    arrow::write_parquet(sink = fbpTablePath)
+
+  # Reset CSV File
+  writeLines(
+    "Iteration,FireID,CellID,Component,Value",
+    str_c(fbpTablePath, ".csv"))
+
+  unlink(tempTablePath)
+}
+
 # Function to convert, accumulate, and clean up raw outputs
 processOutputs <- function(batchOutput, rawOutputGridPaths) {
   # Identify which unique fire ID's belong to each iteration
@@ -588,6 +644,8 @@ processOutputs <- function(batchOutput, rawOutputGridPaths) {
     generateBurnAccumulators(Iteration = ignitionsToExportTable$Iteration[i], UniqueFireIDs = ignitionsToExportTable$UniqueFireIDs[[i]], burnGrids = rawOutputGridPaths, FireIDs = ignitionsToExportTable$FireIDs[[i]], Seasons = ignitionsToExportTable$Seasons[[i]])
     invisible(gc())
   }
+
+  consolidateTabularOutputs()
 }
 
 # Function to call FireSTARR on the (global) parameter file
@@ -748,6 +806,19 @@ generateWeatherFiles <- function(DeterministicBurnCondition){
   invisible()
 }
 
+# Function to convert per-fire spatial outputs into tabular data
+convertToTabular <- function(layer) {
+  layer %>%
+    # Convert to data frame of values
+    values(na.rm = F) %>%
+    as.data.frame() %>%
+    # Columns are named after the source file, rename to "Value"
+    dplyr::rename("Value" = 1) %>%
+    mutate("CellID" = row_number()) %>%
+    # Remove unburned pixels
+    dplyr::filter(Value > 0, !is.na(Value))
+}
+
 # Function to summarize individual burn grids by iteration
 generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireIDs, Seasons) {
   # For iteration zero (fires for resampling), only save individual burn maps and secondary outputs
@@ -758,13 +829,26 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
           alignOutputs(fuelsRaster)
 
         burnArea %>%
-          mask(fuelsRaster) %>%
-          writeRaster(str_c(allPerimOutputFolder, "/it", Iteration,"_fire", FireIDs[i], ".tif"), 
-              overwrite = T,
-              NAflag = -9999,
-              wopt = list(filetype = "GTiff",
-                    datatype = "INT4S",
-                    gdal = c("COMPRESS=DEFLATE","ZLEVEL=9","PREDICTOR=2")))
+          convertToTabular() %>%
+          dplyr::mutate(
+            Iteration = Iteration,
+            FireID = FireIDs[i]) %>%
+          dplyr::select(Iteration, FireID, CellID) %>%
+          fwrite(
+            file = str_c(allPerimTablePath, ".csv"),
+            append = T,
+            col.names = F)
+
+        # # TODO Tabular Per-Fire Outputs: Temporarily commenting out spatial per-fire outputs
+        # # - Consider adding logic for deciding when to keep spatial outputs as well
+        # burnArea %>%
+        #   mask(fuelsRaster) %>%
+        #   writeRaster(str_c(allPerimOutputFolder, "/it", Iteration,"_fire", FireIDs[i], ".tif"), 
+        #       overwrite = T,
+        #       NAflag = -9999,
+        #       wopt = list(filetype = "GTiff",
+        #             datatype = "INT4S",
+        #             gdal = c("COMPRESS=DEFLATE","ZLEVEL=9","PREDICTOR=2")))
         
         if(OutputOptionsSpatial$BurnPerimeter == "Final") {
           burnArea %>%
@@ -841,36 +925,51 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
             dirname() %>%
             list.files(pattern = str_c("^\\d.*", lookup(component, outputComponentNames, outputComponentRawSuffix), ".tif$"), full.names = T) %>%
             tail(1)
-          if (length(inputComponentFileName) > 0) {
-            # Generate output file name
-            outputComponentFileName <- str_c(secondaryOutputFolder, "/it", Iteration,"_fire", FireIDs[i], "_", lookup(component, outputComponentNames, outputComponentCleanSuffix), ".tif") %>%
-              normalizePath(mustWork = F)
 
-            # Rewrite as GeoTiff to output folder
+          if (length(inputComponentFileName) > 0) {
             rast(inputComponentFileName) %>%
               alignOutputs(fuelsRaster, binarize = F) %>%
-              # Set zero values to NA for easier summarizing
-              classify(matrix(c(0, NA), ncol = 2)) %>%
-              writeRaster(outputComponentFileName,
-                overwrite = T,
-                NAflag = -9999,
-                wopt = list(
-                  filetype = "GTiff",
-                  datatype = "FLT4S",
-                  gdal = c("COMPRESS=DEFLATE", "ZLEVEL=9", "PREDICTOR=2")
-                )
-              )
-
-            # Update corresponding table in SyncroSim
-            outputComponentTables[[component]] <<- rbind(
-              outputComponentTables[[component]],
-              data.frame(
+              convertToTabular() %>%
+              dplyr::mutate(
                 Iteration = Iteration,
-                Timestep = FireIDs[i], # TODO: Separate out timestep and fire ID
                 FireID = FireIDs[i],
-                FileName = outputComponentFileName
-              )
-            )
+                Component = component) %>%
+              dplyr::select(Iteration, FireID, CellID, Component, Value) %>%
+              fwrite(
+                file = str_c(fbpTablePath, ".csv"),
+                append = T,
+                col.names = F)
+            # # TODO Tabular Per-Fire Outputs: Temporarily commenting out spatial per-fire outputs
+            # # - Consider adding logic for deciding when to keep spatial outputs as well
+            # # Generate output file name
+            # outputComponentFileName <- str_c(secondaryOutputFolder, "/it", Iteration,"_fire", FireIDs[i], "_", lookup(component, outputComponentNames, outputComponentCleanSuffix), ".tif") %>%
+            #   normalizePath(mustWork = F)
+
+            # # Rewrite as GeoTiff to output folder
+            # rast(inputComponentFileName) %>%
+            #   alignOutputs(fuelsRaster, binarize = F) %>%
+            #   # Set zero values to NA for easier summarizing
+            #   classify(matrix(c(0, NA), ncol = 2)) %>%
+            #   writeRaster(outputComponentFileName,
+            #     overwrite = T,
+            #     NAflag = -9999,
+            #     wopt = list(
+            #       filetype = "GTiff",
+            #       datatype = "FLT4S",
+            #       gdal = c("COMPRESS=DEFLATE", "ZLEVEL=9", "PREDICTOR=2")
+            #     )
+            #   )
+
+            # # Update corresponding table in SyncroSim
+            # outputComponentTables[[component]] <<- rbind(
+            #   outputComponentTables[[component]],
+            #   data.frame(
+            #     Iteration = Iteration,
+            #     Timestep = FireIDs[i], # TODO: Separate out timestep and fire ID
+            #     FireID = FireIDs[i],
+            #     FileName = outputComponentFileName
+            #   )
+            # )
           }
           unlink(inputComponentFileName)
         }
@@ -910,13 +1009,25 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
       
       if(OutputOptionsSpatial$AllPerim == T){
         burnArea %>%
-          mask(fuelsRaster) %>%
-          writeRaster(str_c(allPerimOutputFolder, "/it", Iteration,"_fire", FireIDs[i], ".tif"), 
-              overwrite = T,
-              NAflag = -9999,
-              wopt = list(filetype = "GTiff",
-                    datatype = "INT4S",
-                    gdal = c("COMPRESS=DEFLATE","ZLEVEL=9","PREDICTOR=2")))
+          convertToTabular() %>%
+          dplyr::mutate(
+            Iteration = Iteration,
+            FireID = FireIDs[i]) %>%
+          dplyr::select(Iteration, FireID, CellID) %>%
+          fwrite(
+            file = str_c(allPerimTablePath, ".csv"),
+            append = T,
+            col.names = F)
+        # # TODO Tabular Per-Fire Outputs: Temporarily commenting out spatial per-fire outputs
+        # # - Consider adding logic for deciding when to keep spatial outputs as well
+        # burnArea %>%
+        #   mask(fuelsRaster) %>%
+        #   writeRaster(str_c(allPerimOutputFolder, "/it", Iteration,"_fire", FireIDs[i], ".tif"), 
+        #       overwrite = T,
+        #       NAflag = -9999,
+        #       wopt = list(filetype = "GTiff",
+        #             datatype = "INT4S",
+        #             gdal = c("COMPRESS=DEFLATE","ZLEVEL=9","PREDICTOR=2")))
       }
 
       if(OutputOptionsSpatial$BurnPerimeter == "Final") {
@@ -995,35 +1106,49 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
           list.files(pattern = str_c("^\\d.*", lookup(component, outputComponentNames, outputComponentRawSuffix), ".tif$"), full.names = T) %>%
           tail(1)
         if (length(inputComponentFileName) > 0) {
-          # Generate output file name
-          outputComponentFileName <- str_c(secondaryOutputFolder, "/it", Iteration,"_fire", FireIDs[i], "_", lookup(component, outputComponentNames, outputComponentCleanSuffix), ".tif") %>%
-            normalizePath(mustWork = F)
-
-          # Rewrite as GeoTiff to output folder
           rast(inputComponentFileName) %>%
             alignOutputs(fuelsRaster, binarize = F) %>%
-            # Set zero values to NA for easier summarizing
-            classify(matrix(c(0, NA), ncol = 2)) %>%
-            writeRaster(outputComponentFileName,
-              overwrite = T,
-              NAflag = -9999,
-              wopt = list(
-                filetype = "GTiff",
-                datatype = "FLT4S",
-                gdal = c("COMPRESS=DEFLATE", "ZLEVEL=9", "PREDICTOR=2")
-              )
-            )
-
-          # Update corresponding table in SyncroSim
-          outputComponentTables[[component]] <<- rbind(
-            outputComponentTables[[component]],
-            data.frame(
+            convertToTabular() %>%
+            dplyr::mutate(
               Iteration = Iteration,
-              Timestep = FireIDs[i], # TODO: Separate out timestep and fire ID
               FireID = FireIDs[i],
-              FileName = outputComponentFileName
-            )
-          )
+              Component = component) %>%
+            dplyr::select(Iteration, FireID, CellID, Component, Value) %>%
+            fwrite(
+              file = str_c(fbpTablePath, ".csv"),
+              append = T,
+              col.names = F)
+          # # TODO Tabular Per-Fire Outputs: Temporarily commenting out spatial per-fire outputs
+          # # - Consider adding logic for deciding when to keep spatial outputs as well
+          # # Generate output file name
+          # outputComponentFileName <- str_c(secondaryOutputFolder, "/it", Iteration,"_fire", FireIDs[i], "_", lookup(component, outputComponentNames, outputComponentCleanSuffix), ".tif") %>%
+          #   normalizePath(mustWork = F)
+
+          # # Rewrite as GeoTiff to output folder
+          # rast(inputComponentFileName) %>%
+          #   alignOutputs(fuelsRaster, binarize = F) %>%
+          #   # Set zero values to NA for easier summarizing
+          #   classify(matrix(c(0, NA), ncol = 2)) %>%
+          #   writeRaster(outputComponentFileName,
+          #     overwrite = T,
+          #     NAflag = -9999,
+          #     wopt = list(
+          #       filetype = "GTiff",
+          #       datatype = "FLT4S",
+          #       gdal = c("COMPRESS=DEFLATE", "ZLEVEL=9", "PREDICTOR=2")
+          #     )
+          #   )
+
+          # # Update corresponding table in SyncroSim
+          # outputComponentTables[[component]] <<- rbind(
+          #   outputComponentTables[[component]],
+          #   data.frame(
+          #     Iteration = Iteration,
+          #     Timestep = FireIDs[i], # TODO: Separate out timestep and fire ID
+          #     FireID = FireIDs[i],
+          #     FileName = outputComponentFileName
+          #   )
+          # )
         }
         unlink(inputComponentFileName)
       }
@@ -1100,11 +1225,25 @@ ignitionLocation <- DeterministicIgnitionLocation %>%
 outputComponentsToKeep <- outputComponentsToKeepDisplayName %>%
   lookup(FBPVariableTable$DisplayName, FBPVariableTable$Name)
 
-# - Initialize list of tables to hold outputs
-outputComponentTables <- list()
-for (component in outputComponentsToKeep) {
-  outputComponentTables[[component]] <- data.frame()
-}
+# # TODO Tabular Per-Fire Outputs: Temporarily commenting out spatial per-fire outputs
+# # - Consider adding logic for deciding when to keep spatial outputs as well
+# # - Initialize list of tables to hold outputs
+# outputComponentTables <- list()
+# for (component in outputComponentsToKeep) {
+#   outputComponentTables[[component]] <- data.frame()
+# }
+
+## Initialize temporary CSV files to track per-fire outputs as they are generated ----
+writeLines(
+  "Iteration,FireID,CellID",
+  str_c(allPerimTablePath, ".csv")
+)
+
+writeLines(
+  "Iteration,FireID,CellID,Component,Value",
+  str_c(fbpTablePath, ".csv")
+)
+  
 
 # Combine deterministic input tables ----
 fireGrowthInputs <- DeterministicBurnCondition %>%
@@ -1282,12 +1421,22 @@ if(saveBurnMaps) {
     saveDatasheet(myScenario, OutputBurnMap, "burnP3Plus_OutputBurnMap")
   
   # Output secondary outputs if present
-  if (length(outputComponentsToKeep) > 0) {
-    for (i in seq_along(outputComponentTables)) {
-      if (!isDatasheetEmpty(outputComponentTables[[i]])) {
-        saveDatasheet(myScenario, outputComponentTables[[i]], str_c("burnP3Plus_Output", outputComponentsToKeep[i], "Map"))
-      }
-    }
+  if (keepSecondaries) {
+    OutputFBPTabular <- data.frame(
+      FileName = fbpTablePath %>% normalizePath(mustWork = F),
+      Description =
+        str_c(
+          "Tabular FBP outputs", 
+          ifelse(runContext$isParallel, str_c(" - Job ", runContext$jobIndex), "")))
+    
+    saveDatasheet(myScenario, OutputFBPTabular, str_c("burnP3Plus_OutputFBPTabular"))
+    # # TODO Tabular Per-Fire Outputs: Temporarily commenting out spatial per-fire outputs
+    # # - Consider adding logic for deciding when to keep spatial outputs as well
+    # for (i in seq_along(outputComponentTables)) {
+    #   if (!isDatasheetEmpty(outputComponentTables[[i]])) {
+    #     saveDatasheet(myScenario, outputComponentTables[[i]], str_c("burnP3Plus_Output", outputComponentsToKeep[i], "Map"))
+    #   }
+    # }
   }
   
   updateRunLog("Finished accumulating burn maps in ", updateBreakpoint())
@@ -1297,19 +1446,30 @@ if(saveBurnMaps) {
 if(OutputOptionsSpatial$AllPerim | (saveBurnMaps & minimumFireSize > 0)){
   progressBar(type = "message", message = "Saving individual burn maps...")
 
-  # Build table of burn maps and save to SyncroSim
-  OutputAllPerim <- 
-    tibble(
-      FileName = list.files(allPerimOutputFolder, ".tif$", full.names = T) %>% normalizePath(),
-      Iteration = str_extract(FileName, "it\\d+") %>% str_extract("\\d+") %>% as.integer(),
-      FireID = str_extract(FileName, "fire\\d+") %>% str_extract("\\d+") %>% as.integer(),
-      Timestep = FireID) %>%
-    filter(Iteration %in% iterations | (Iteration == 0 & FireID %in% extraIgnitionIDs)) %>%
-    as.data.frame
+  OutputAllPerimTabular <- data.frame(
+    FileName = allPerimTablePath %>% normalizePath(mustWork = F),
+    Description =
+      str_c(
+        "Tabular burn outputs per fire", 
+        ifelse(runContext$isParallel, str_c(" - Job ", runContext$jobIndex), "")))
   
-  # Output if there are records to save
-  if(!isDatasheetEmpty(OutputAllPerim))
-    saveDatasheet(myScenario, OutputAllPerim, "burnP3Plus_OutputAllPerim")
+  saveDatasheet(myScenario, OutputAllPerimTabular, str_c("burnP3Plus_OutputAllPerimTabular"))
+
+  # # TODO Tabular Per-Fire Outputs: Temporarily commenting out spatial per-fire outputs
+  # # - Consider adding logic for deciding when to keep spatial outputs as well
+  # # Build table of burn maps and save to SyncroSim
+  # OutputAllPerim <- 
+  #   tibble(
+  #     FileName = list.files(allPerimOutputFolder, ".tif$", full.names = T) %>% normalizePath(),
+  #     Iteration = str_extract(FileName, "it\\d+") %>% str_extract("\\d+") %>% as.integer(),
+  #     FireID = str_extract(FileName, "fire\\d+") %>% str_extract("\\d+") %>% as.integer(),
+  #     Timestep = FireID) %>%
+  #   filter(Iteration %in% iterations | (Iteration == 0 & FireID %in% extraIgnitionIDs)) %>%
+  #   as.data.frame
+  
+  # # Output if there are records to save
+  # if(!isDatasheetEmpty(OutputAllPerim))
+  #   saveDatasheet(myScenario, OutputAllPerim, "burnP3Plus_OutputAllPerim")
   
   updateRunLog("Finished individual burn maps in ", updateBreakpoint())
 }
