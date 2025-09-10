@@ -588,39 +588,46 @@ getResampleStatus <- function(burnSummary) {
 # Function to consolidate raw tabular outputs per batch 
 consolidateTabularOutputs <- function() {
   # Per-fire burn locations ----
-  # Read in raw individual burn perimeter data from current batch and save to parquet
-  fread(str_c(allPerimTablePath, ".csv")) %>%
-    arrow::write_parquet(sink = tempTablePath)
+  # Check that there is data to consolidate
+  if(nrow(fread(str_c(allPerimTablePath, ".csv"), nrows = 3)) > 0) {
+    # Read in raw individual burn perimeter data from current batch and save to parquet
+    fread(str_c(allPerimTablePath, ".csv")) %>%
+      arrow::write_parquet(sink = tempTablePath)
 
-  # Combine with previous tabular data, if present
-  c(allPerimTablePath, tempTablePath) %>%
-    `[`(file.exists(.)) %>% # This drops the all perim parquet file if it does not exist yet
-    arrow::open_dataset() %>%
-    arrow::write_parquet(sink = allPerimTablePath)
+    # Combine with previous tabular data, if present
+    c(allPerimTablePath, tempTablePath) %>%
+      `[`(file.exists(.)) %>% # This drops the all perim parquet file if it does not exist yet
+      arrow::open_dataset() %>%
+      arrow::write_parquet(sink = allPerimTablePath)
 
-  # Reset CSV File
-  writeLines(
-    "Iteration,FireID,CellID",
-    str_c(allPerimTablePath, ".csv"))
+    # Reset CSV File
+    writeLines(
+      "Iteration,FireID,CellID",
+      str_c(allPerimTablePath, ".csv"))
+  }
 
   # Per-fire FBP data ----
-  # Reshape outputs from the current batch into the temp table
-  fread(str_c(fbpTablePath, ".csv")) %>%
-    dcast(Iteration + FireID + CellID ~ Component, value.var = "Value") %>%
-    arrow::write_parquet(sink = tempTablePath)
+  # Check that there is data to consolidate
+  if(nrow(fread(str_c(fbpTablePath, ".csv"), nrows = 3)) > 0) {
 
-  # Combine with previous FBP outputs, if present
-  c(fbpTablePath, tempTablePath) %>%
-    `[`(file.exists(.)) %>% # This drops the fbp parquet file if it does not exist yet
-    arrow::open_dataset() %>%
-    arrow::write_parquet(sink = fbpTablePath)
+    # Reshape outputs from the current batch into the temp table
+    fread(str_c(fbpTablePath, ".csv")) %>%
+      dcast(Iteration + FireID + CellID ~ Component, value.var = "Value") %>%
+      arrow::write_parquet(sink = tempTablePath)
 
-  # Reset CSV File
-  writeLines(
-    "Iteration,FireID,CellID,Component,Value",
-    str_c(fbpTablePath, ".csv"))
+    # Combine with previous FBP outputs, if present
+    c(fbpTablePath, tempTablePath) %>%
+      `[`(file.exists(.)) %>% # This drops the fbp parquet file if it does not exist yet
+      arrow::open_dataset() %>%
+      arrow::write_parquet(sink = fbpTablePath)
 
-  unlink(tempTablePath)
+    # Reset CSV File
+    writeLines(
+      "Iteration,FireID,CellID,Component,Value",
+      str_c(fbpTablePath, ".csv"))
+  }
+
+  unlink(tempTablePath, force = T)
 }
 
 # Function to convert, accumulate, and clean up raw outputs
@@ -827,6 +834,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
       if(!is.na(UniqueFireIDs[i]) & !is.na(burnGrids[[UniqueFireIDs[i]]] %>% append(NA, after = 0) %>% tail(1)) ){
         burnArea <- rast(burnGrids[[UniqueFireIDs[i]]] %>% tail(1)) %>% 
           alignOutputs(fuelsRaster)
+        isEmpty <- !any(values(burnArea, mat = F, na.rm = T) > 0)
 
         burnArea %>%
           convertToTabular() %>%
@@ -850,7 +858,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
         #             datatype = "INT4S",
         #             gdal = c("COMPRESS=DEFLATE","ZLEVEL=9","PREDICTOR=2")))
         
-        if(OutputOptionsSpatial$BurnPerimeter == "Final") {
+        if(OutputOptionsSpatial$BurnPerimeter == "Final" & !isEmpty) {
           burnArea %>%
             # Trim down to only burned area by first converting all non-burned pixels to NA
             classify(matrix(c(0, NA), ncol = 2)) %>%
@@ -875,7 +883,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
               append = TRUE)
         }
 
-        if(OutputOptionsSpatial$BurnPerimeter == "Daily") {
+        if(OutputOptionsSpatial$BurnPerimeter == "Daily" & !isEmpty) {
           # For daily perimeters, iterate over daily burn maps to generate burn perimeters
           burn_to_date <- NULL
           for (j in seq_along(burnGrids[[UniqueFireIDs[i]]])) {
@@ -997,6 +1005,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
       # Read in and add current burn map
       burnArea <- rast(burnGrids[[UniqueFireIDs[i]]] %>% tail(1)) %>%
         alignOutputs(fuelsRaster)
+      isEmpty <- !any(values(burnArea, mat = F, na.rm = T) > 0)
         
       accumulator <- sum(accumulator, burnArea, na.rm = T)
       
@@ -1030,7 +1039,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
         #             gdal = c("COMPRESS=DEFLATE","ZLEVEL=9","PREDICTOR=2")))
       }
 
-      if(OutputOptionsSpatial$BurnPerimeter == "Final") {
+      if(OutputOptionsSpatial$BurnPerimeter == "Final" & !isEmpty) {
         burnArea %>%
           # Trim down to only burned area by first converting all non-burned pixels to NA
           classify(matrix(c(0, NA), ncol = 2)) %>%
@@ -1055,7 +1064,7 @@ generateBurnAccumulators <- function(Iteration, UniqueFireIDs, burnGrids, FireID
             append = TRUE)
       }
 
-      if(OutputOptionsSpatial$BurnPerimeter == "Daily") {
+      if(OutputOptionsSpatial$BurnPerimeter == "Daily" & !isEmpty) {
         # For daily perimeters, iterate over daily burn maps to generate burn perimeters
         burn_to_date <- NULL
         for (j in seq_along(burnGrids[[UniqueFireIDs[i]]])) {
@@ -1429,7 +1438,8 @@ if(saveBurnMaps) {
           "Tabular FBP outputs", 
           ifelse(runContext$isParallel, str_c(" - Job ", runContext$jobIndex), "")))
     
-    saveDatasheet(myScenario, OutputFBPTabular, str_c("burnP3Plus_OutputFBPTabular"))
+    if(file.exists(fbpTablePath))
+      saveDatasheet(myScenario, OutputFBPTabular, str_c("burnP3Plus_OutputFBPTabular"))
     # # TODO Tabular Per-Fire Outputs: Temporarily commenting out spatial per-fire outputs
     # # - Consider adding logic for deciding when to keep spatial outputs as well
     # for (i in seq_along(outputComponentTables)) {
@@ -1453,7 +1463,8 @@ if(OutputOptionsSpatial$AllPerim | (saveBurnMaps & minimumFireSize > 0)){
         "Tabular burn outputs per fire", 
         ifelse(runContext$isParallel, str_c(" - Job ", runContext$jobIndex), "")))
   
-  saveDatasheet(myScenario, OutputAllPerimTabular, str_c("burnP3Plus_OutputAllPerimTabular"))
+  if (file.exists(allPerimTablePath))
+    saveDatasheet(myScenario, OutputAllPerimTabular, str_c("burnP3Plus_OutputAllPerimTabular"))
 
   # # TODO Tabular Per-Fire Outputs: Temporarily commenting out spatial per-fire outputs
   # # - Consider adding logic for deciding when to keep spatial outputs as well
