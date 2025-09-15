@@ -366,9 +366,9 @@ if(.Platform$OS.type == "unix") {
   # Ensure external dependencies are available
   external_libs <- system2("ldconfig", "-p")
   if(!all(
-    str_detect(external_libs, "libgeotiff.so.5"),
-    str_detect(external_libs, "libtiff.so.6"),
-    str_detect(external_libs, "libproj.so.25")))
+    any(str_detect(external_libs, "libgeotiff.so.5")),
+    any(str_detect(external_libs, "libtiff.so.6")),
+    any(str_detect(external_libs, "libproj.so.25"))))
     stop("BurnP3+ FireSTARR on Linux currently requires one or more system dependencies that were not found. Please ensure the following packages or their equivalents for your distribution are installed: `libgeotiff5`, `libtiff6`, `libproj25")
 } else {
   firestarrExecutable <- "tbd.exe"
