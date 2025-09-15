@@ -364,7 +364,7 @@ if(.Platform$OS.type == "unix") {
   firestarrExecutable <- "./tbd"
   
   # Ensure external dependencies are available
-  external_libs <- system2("ldconfig", "-p")
+  external_libs <- system2("ldconfig", "-p", stdout = T)
   if(!all(
     any(str_detect(external_libs, "libgeotiff.so.5")),
     any(str_detect(external_libs, "libtiff.so.6")),
