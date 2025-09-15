@@ -694,7 +694,8 @@ runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, numDays, Sea
 runFireSTARRBatch <- function(ignitionData) {
   resetFolder(gridOutputFolder)
 
-  Sys.setenv("PROJ_LIB" = ssim_proj_lib)
+  if(.Platform$OS.type != "unix")
+    Sys.setenv("PROJ_LIB" = ssim_proj_lib)
   
   ignitionData %>%
     mutate(
