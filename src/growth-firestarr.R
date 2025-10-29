@@ -145,6 +145,56 @@ fuelLookupFile      <- file.path(tempDir, "fuel.lut")
 
 ## Transformer-specific Function Definitions ----
 
+# Function to pad NA around a raster map out of memory
+# - Noticeably slower than `extend` but lower memory footprint
+# - This is usually okay since only fuels and elevation need to be extended once per job
+extendOnDisk <- function(input_layer, output_extent, filename, ...) {
+  # Get layer info and extend an empty copy of input to use as placeholder
+  input_extent <- ext(input_layer)
+  resolution <- res(input_layer)[1]
+  x <- rast(input_layer) %>%
+    extend(output_extent)
+  
+  # Calculate row and col offsets pre- and post-padding
+  offset_above <-  (output_extent$ymax - input_extent$ymax) / resolution
+  offset_right <-  (output_extent$xmax - input_extent$xmax) / resolution
+  offset_left  <- -(output_extent$xmin - input_extent$xmin) / resolution
+  
+  # The blocks function is not available in the conda version of terra, so we access block info by opening and closing write connnection with an empty raster
+  temp <- rast(input_layer)
+  blockInfo <- writeStart(temp, filename = "")
+  invisible(writeStop(temp))
+  rm(temp)
+
+  # Open the output template for writing
+  writeStart(x, filename = filename, ...)
+
+  for (i in seq_along(blockInfo$row) ) {
+    # read values appears to leak memory until the file is closed, so we start and stop frequently to reduce memory overhead
+    readStart(input_layer)
+
+    # Read values and bind an appropriante number of NA columns to either side
+    v <- readValues(input_layer, row = blockInfo$row[i], nrows = blockInfo$nrows[i])
+    v <- matrix(v, ncol = ncol(input_layer), byrow = T)
+    v <- cbind(
+      matrix(NA_integer_, nrow = blockInfo$nrows[i], ncol = offset_left),
+      v,
+      matrix(NA_integer_, nrow = blockInfo$nrows[i], ncol = offset_right))
+    v <- as.numeric(t(v))
+
+    # Write values, offsetting by the number of rows padded above
+    writeValues(x, v, blockInfo$row[i] + offset_above, nrows = blockInfo$nrows[i])
+    readStop(input_layer)
+
+    # Although garbage collection every block is slow, it help reduce memory overhead
+    gc()
+  }
+  
+  # Clean up
+  writeStop(x)
+  gc()
+}
+
 # Function to get burn grid paths after a batch of runs
 # - This is a list where each element is a vector of output paths
 # - Each list element might contain multiple paths if outputs are produced each day to generate daily perimeters
@@ -186,27 +236,46 @@ getBurnAreas <- function(rawOutputGridPaths) {
   return(burnAreas)
 }
 
+# Function to convert Cell IDs from one extent (raw cropped outputs) to another (full landscape)
+convertCellIDs <- function(cellIDs, from_path, to_layer) {
+  # Load input layer from path
+  from_layer <- rast(from_path) %>%
+    # - FireSTARR overwrites CRS but does not reproject outputs, so we reassign here
+    set_crs(crs(to_layer))
+  
+  # Find resolution and extent offsets
+  resolution <- res(to_layer)[1] # Assumed to be square and identical for both layers
+  x_offset <- (ext(from_layer)$xmin - ext(to_layer)$xmin) / resolution
+  y_offset <- (ext(to_layer)$ymax - ext(from_layer)$ymax) / resolution
+
+  # Convert to row col
+  rowColFromCell(from_layer, cellIDs) %>%
+    # Transpose to leverage R's vectorized addition
+    t() %>%
+    # Add row and col offsets (in that order)
+    `+`(c(y_offset, x_offset)) %>%
+    # Convert to Cell IDs using output extent
+    {cellFromRowCol(to_layer, row = .[1,], col = .[2,])}
+}
+
+# Function to extract the cell IDs of burned pixels in the raw cropped extent (see convertCellIDs() above)
 findBurnedCellIDs <- function(layer_filepath, template) {
   # Load layer
   rast(layer_filepath) %>%
     # - FireSTARR overwrites CRS but does not reproject outputs, so we reassign here
     set_crs(crs(template)) %>%
-    # FireSTARR crops the output, so we need to align to the fuels raster
-    crop(template) %>%
-    extend(template) %>%
     # Find IDs of burned cells (value = 1)
     cells(y = 1) %>%
     unlist
 }
 
+# Function to extract FBP cell data for burned cells when the burned cell IDs are known
+# - note that cell IDs are expected in the raw cropped extent, not the full landscape
 extractTabularData <- function(layer_filepath, cellIDs, template) {
   # Load layer
   rast(layer_filepath) %>%
     # - FireSTARR overwrites CRS but does not reproject outputs, so we reassign here
     set_crs(crs(template)) %>%
-    # Align layers back to template
-    crop(template) %>%
-    extend(template) %>%
     # Extract values from Cell IDs
     `[`(cellIDs) %>%
     # Return as vector
@@ -257,7 +326,11 @@ processOutputsPerFire <- function(BatchID, Iteration, FireID, UniqueFireID, burn
     BatchID = BatchID,
     Iteration = Iteration,
     FireID = FireID,
-    CellID = findBurnedCellIDs(burnPath, fuelsRaster))
+    # Keep cell ID in the original cropped raw output extent to extract FBP data, if present
+    rawCellID = findBurnedCellIDs(burnPath, fuelsRaster))
+  
+  # Also calculate cell ID in final full extent for later
+  burnData[, "CellID" := convertCellIDs(rawCellID, burnPath, fuelsRaster)]
 
   # Add columns of data for any FBP outputs
   for (component in outputComponentsToKeep) {
@@ -270,9 +343,12 @@ processOutputsPerFire <- function(BatchID, Iteration, FireID, UniqueFireID, burn
     # If it exists, add a corresponding column to burnData
     # - Note that with data.table syntax this does not need to be assigned back to burnData
     if (length(inputComponentFileName) > 0) {
-      burnData[, (component) := extractTabularData(inputComponentFileName, CellID, fuelsRaster)]
+      burnData[, (component) := extractTabularData(inputComponentFileName, rawCellID, fuelsRaster)]
     }
   }
+
+  # Drop the raw Cell ID column now that FBP outputs are handled
+  burnData[, rawCellID := NULL]
 
   # Generate vector outputs if required
   if(OutputOptionsSpatial$BurnPerimeter != "No")
@@ -531,11 +607,21 @@ padded_extent <- ext(fuelsRaster) +
     ymax =  abs(ceiling(pad_rows / 2) * yres(fuelsRaster)))
 
 fuelsRaster %>%
-  extend(padded_extent) %>%
-  writeRaster(fuelsRasterFile, overwrite = T, datatype = "INT2S", NAflag = -9999, gdal=c("TILED=YES"))
+  extendOnDisk(
+    padded_extent,
+    filename = fuelsRasterFile,
+    overwrite = T,
+    datatype = "INT2S",
+    NAflag = -9999,
+    gdal=c("TILED=YES"))
 elevationRaster %>%
-  extend(padded_extent) %>%
-  writeRaster(elevationRasterFile, overwrite = T, datatype = "INT2S", NAflag = -9999, gdal=c("TILED=YES"))
+  extendOnDisk(
+    padded_extent,
+    filename = elevationRasterFile,
+    overwrite = T,
+    datatype = "INT2S",
+    NAflag = -9999,
+    gdal=c("TILED=YES"))
 
 # Reformat fuel lookup table
 FuelType %>%
