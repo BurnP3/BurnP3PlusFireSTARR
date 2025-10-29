@@ -367,6 +367,9 @@ processOutputs <- function(batchOutputs, rawOutputGridPaths) {
   # Generate outputs and collect raw tabular outputs
   batchTabularData <- pmap_dfr(batchOutputs, processOutputsPerFire, burnGrids = rawOutputGridPaths)
 
+  # Clear up unused memory from merging tabular per fire
+  gc()
+
   # Save batch outputs to temp dataset
   if(!isDatasheetEmpty(batchTabularData))
     arrow::write_dataset(
