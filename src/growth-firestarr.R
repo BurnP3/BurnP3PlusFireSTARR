@@ -2,6 +2,65 @@
 Sys.unsetenv("PROJ_LIB")
 library(rsyncrosim)
 
+timeLog <- list(
+  "preburn" = 0,
+  "Setup fire growth inputs" = 0,
+  "Generate weather files" = 0,
+  "Run FireSTARR" = 0,
+  "Get output grid paths" = 0,
+  "Get burn areas" = 0,
+  "Get resample status" = 0,
+  "Process fire growth outputs" = 0,
+  "Collect tabular data - setup" = 0,
+  "Collect tabular data - find burned cells" = 0,
+  "Collect tabular data - extract FBP values" = 0,
+  "Generate vector burn perimeters" = 0,
+  "Manual memory management" = 0,
+  "Write parquet files" = 0,
+  "Clean up between batches" = 0
+)
+currentCategory <- "preburn"
+# Function to time segments of the code by category
+logSegment <- function(newCategory) {
+  # Calculate time since last breakpoint
+  newBreakPoint <- proc.time()
+  elapsed <- (newBreakPoint - currentBreakPoint)['elapsed']
+  
+  # Update time spent in current category
+  timeLog[currentCategory] <<- timeLog[[currentCategory]] + elapsed 
+    
+  # Update current breakpoint
+  currentBreakPoint <<- newBreakPoint
+  currentCategory <<- newCategory
+}
+
+formatSegment <- function(elapsed, category) {
+  formattedElapsedTime <- "Parsing error"
+
+  # Return cleaned elapsed time
+  if (elapsed < 60) {
+    formattedElapsedTime <- str_c(round(elapsed), " seconds")
+  } else if (elapsed < 60^2) {
+    formattedElapsedTime <- str_c(round(elapsed / 60, 1), " minutes")
+  } else
+    formattedElapsedTime <- str_c(round(elapsed / 60 / 60, 1), " hours")
+
+  return(str_c("    ", category, " -- ", formattedElapsedTime))
+}
+
+# Function to report time segments to the run log
+reportSegments <- function(newCategory) {
+  str_c(
+    "Segmented Time Log:\n",
+    str_c(
+      imap_chr(timeLog, formatSegment),
+      collapse = "\n"
+    ),
+    sep = "\n") %>%
+    updateRunLog(type = "info")
+
+}
+
 # Find and source shared setup script and function definitions
 getSharedDefinitionsPath <- function() {
   sessionPackages <- rsyncrosim::packages(session())
@@ -322,6 +381,7 @@ processOutputsPerFire <- function(BatchID, Iteration, FireID, UniqueFireID, burn
     tail(1)
 
   # Get table of burned cells
+  logSegment("Collect tabular data - find burned cells")
   burnData <- data.table(
     BatchID = BatchID,
     Iteration = Iteration,
@@ -333,6 +393,7 @@ processOutputsPerFire <- function(BatchID, Iteration, FireID, UniqueFireID, burn
   burnData[, "CellID" := convertCellIDs(rawCellID, burnPath, fuelsRaster)]
 
   # Add columns of data for any FBP outputs
+  logSegment("Collect tabular data - extract FBP values")
   for (component in outputComponentsToKeep) {
     # Find the correct secondary output in the same folder as the burn grid
     inputComponentFileName <- burnPath %>%
@@ -351,10 +412,12 @@ processOutputsPerFire <- function(BatchID, Iteration, FireID, UniqueFireID, burn
   burnData[, rawCellID := NULL]
 
   # Generate vector outputs if required
+  logSegment("Generate vector burn perimeters")
   if(OutputOptionsSpatial$BurnPerimeter != "No")
     generateVectorPerimeters(Iteration, FireID, UniqueFireID, burnGrids[[UniqueFireID]])
 
   # Return raw tabular outputs
+  logSegment("Collect tabular data - setup")
   return(burnData)
 }
 
@@ -365,12 +428,15 @@ processOutputs <- function(batchOutputs, rawOutputGridPaths) {
     filter(ResampleStatus == "Kept" | ResampleStatus == "Extra")
     
   # Generate outputs and collect raw tabular outputs
+  logSegment("Collect tabular data - setup")
   batchTabularData <- pmap_dfr(batchOutputs, processOutputsPerFire, burnGrids = rawOutputGridPaths)
 
   # Clear up unused memory from merging tabular per fire
+  logSegment("Manual memory management")
   gc()
 
   # Save batch outputs to temp dataset
+  logSegment("Write parquet files")
   if(!isDatasheetEmpty(batchTabularData))
     arrow::write_dataset(
       dataset = batchTabularData,
@@ -382,6 +448,7 @@ processOutputs <- function(batchOutputs, rawOutputGridPaths) {
 
 # Function to call FireSTARR on the (global) parameter file
 runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, numDays, Season, Curing, GreenUp, DC, DMC, FFMC, ...) {
+  logSegment("Setup fire growth inputs")
   outputFolder <- file.path(gridOutputFolder, str_pad(UniqueBatchFireIndex, 5, pad="0"))
   dir.create(outputFolder, showWarnings = F)
 
@@ -413,6 +480,7 @@ runFireSTARR <- function(UniqueBatchFireIndex, Latitude, Longitude, numDays, Sea
   # Log arguemnts used for run
   fwrite(list(c(str_c("./", firestarrExecutable), firestarr_args)), "fs-arguments.log", eol = " ")
 
+  logSegment("Run FireSTARR")
   system2(firestarrExecutable, firestarr_args, stdout = FALSE) # For debugging, consider saving stdout to file instead
 }
 
@@ -436,34 +504,42 @@ runFireSTARRBatch <- function(ignitionData) {
 
 # Function to run one batch of iterations
 runBatch <- function(batchInputs) {
+  logSegment("Setup fire growth inputs")
   # Generate batch-specific index for fires
   batchInputs <- batchInputs %>%
     mutate(UniqueFireID = row_number())
 
   # - Unnest and process weather info
+  logSegment("Generate weather files")
   batchWeather <- unnest(batchInputs, data)
   generateWeatherFiles(batchWeather)
   
   # Run FireSTARR on the batch
+  logSegment("Setup fire growth inputs")
   runFireSTARRBatch(batchInputs)
   
   # Get relative paths to all raw outputs
+  logSegment("Get output grid paths")
   rawOutputGridPaths <- getRawOutputGridPaths()
   
   # Get burn areas
+  logSegment("Get burn areas")
   burnAreas <- getBurnAreas(rawOutputGridPaths)
 
   # Convert and save spatial outputs as needed
+  logSegment("Get resample status")
   batchOutputs <- batchInputs %>%
     select(BatchID, UniqueFireID, Iteration, FireID, Season) %>%
     mutate(Area = burnAreas) %>%
     getResampleStatus()
     
   # Save GeoTiffs if needed
+  logSegment("Process fire growth outputs")
   if(saveBurnMaps)
     processOutputs(batchOutputs, rawOutputGridPaths)
   
   # Clear up temp files
+  logSegment("Clean up between batches")
   resetFolder(gridOutputFolder)
   
   # Update Progress Bar
@@ -681,6 +757,7 @@ OutputFireStatistic <- fireGrowthInputs %>%
   map_dfr(runBatch)
 
 updateRunLog("Finished burning fires in ", updateBreakpoint())
+reportSegments()
 
 # Save relevant outputs ----
 
