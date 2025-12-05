@@ -575,8 +575,12 @@ generateVectorPerimeters <- function(Iteration, FireID, UniqueFireID, burnGrids,
         burn_today <- burn_to_date
       } else {
         st_agr(burn_to_date) = "constant"
-        burn_today <- burn_to_date %>%
-          st_difference(st_geometry(burn_yesterday))
+        if (nrow(burn_yesterday) > 0) {
+          burn_today <- burn_to_date %>%
+            st_difference(st_geometry(burn_yesterday))
+        } else {
+          burn_today <- burn_to_date
+        }
       }
 
       # Save output
