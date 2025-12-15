@@ -186,8 +186,10 @@ extendOnDisk <- function(input_layer, output_extent, filename, ...) {
     writeValues(x, v, blockInfo$row[i] + offset_above, nrows = blockInfo$nrows[i])
     readStop(input_layer)
 
-    # Although garbage collection every block is slow, it help reduce memory overhead
-    gc()
+    # Reduce gc() frequency - only call every 10 blocks instead of every block
+    if (i %% 10 == 0) {
+      gc()
+    }
   }
   
   # Clean up
@@ -227,22 +229,14 @@ getBurnArea <- function(inputFile) {
 
 # Get burn areas from all generated output files
 getBurnAreas <- function(rawOutputGridPaths) {
-  # Calculate burn areas for each fire
-  burnAreas <- c(NA_real_)
-  length(burnAreas) <- length(rawOutputGridPaths)
+  # Calculate burn areas for each fire using vapply for type-safety and efficiency
+  burnAreas <- vapply(rawOutputGridPaths, getBurnArea, numeric(1))
 
-  burnAreas <- unlist(lapply(rawOutputGridPaths[seq_along(burnAreas)],getBurnArea))
-  
   return(burnAreas)
 }
 
 # Function to convert Cell IDs from one extent (raw cropped outputs) to another (full landscape)
-convertCellIDs <- function(cellIDs, from_path, to_layer) {
-  # Load input layer from path
-  from_layer <- rast(from_path) %>%
-    # - FireSTARR overwrites CRS but does not reproject outputs, so we reassign here
-    set_crs(crs(to_layer))
-  
+convertCellIDs <- function(cellIDs, from_layer, to_layer) {
   # Find resolution and extent offsets
   resolution <- res(to_layer)[1] # Assumed to be square and identical for both layers
   x_offset <- (ext(from_layer)$xmin - ext(to_layer)$xmin) / resolution
@@ -259,11 +253,8 @@ convertCellIDs <- function(cellIDs, from_path, to_layer) {
 }
 
 # Function to extract the cell IDs of burned pixels in the raw cropped extent (see convertCellIDs() above)
-findBurnedCellIDs <- function(layer_filepath, template) {
-  # Load layer
-  rast(layer_filepath) %>%
-    # - FireSTARR overwrites CRS but does not reproject outputs, so we reassign here
-    set_crs(crs(template)) %>%
+findBurnedCellIDs <- function(layer) {
+  layer %>%  
     # Find IDs of burned cells (value = 1)
     cells(y = 1) %>%
     unlist
@@ -289,17 +280,16 @@ readAsVector <- function(layer_path) {
   # If there is no data, return and empty geom
   # - Note that unburned cells are NA in FireSTARR
   if(unlist(global(raster_data, "notNA")) == 0) {
-    layer_data <- fuelsRaster %>%
-      ext() %>%
-      as.polygons() %>%
-      erase(.,.)
+    return(
+      st_sf(
+        data.frame(),
+        geometry = st_sfc(crs = crs(fuelsRaster))))
+  }
 
   # Otherwise trim and convert raster data
-  } else {
-    layer_data <- raster_data %>%
-      trim() %>% 
-      as.polygons()
-  }
+  layer_data <- raster_data %>%
+    trim() %>%
+    as.polygons()
 
   # Clean up and return
   layer_data %>%
@@ -315,22 +305,25 @@ processOutputsPerFire <- function(BatchID, Iteration, FireID, UniqueFireID, burn
   # Return nothing if no maps were produced for this fire
   if(length(burnGrids) < UniqueFireID | all(is.na(burnGrids[[UniqueFireID]])))
     return()
-  
+
   # Load spatial data if present
-  # - Note that there might be multiple burn grids per fire if we're generating daily burn vectors. We want last present 
+  # - Note that there might be multiple burn grids per fire if we're generating daily burn vectors. We want last present
   burnPath <- burnGrids[[UniqueFireID]] %>%
     tail(1)
+  burnGrid <- burnPath %>%
+    rast() %>%
+    set_crs(crs(fuelsRaster))
 
-  # Get table of burned cells
+  # Get table of burned cells using the already-loaded raster
   burnData <- data.table(
     BatchID = BatchID,
     Iteration = Iteration,
     FireID = FireID,
     # Keep cell ID in the original cropped raw output extent to extract FBP data, if present
-    rawCellID = findBurnedCellIDs(burnPath, fuelsRaster))
+    rawCellID = findBurnedCellIDs(burnGrid))
   
   # Also calculate cell ID in final full extent for later
-  burnData[, "CellID" := convertCellIDs(rawCellID, burnPath, fuelsRaster)]
+  burnData[, "CellID" := convertCellIDs(rawCellID, burnGrid, fuelsRaster)]
 
   # Add columns of data for any FBP outputs
   for (component in outputComponentsToKeep) {
@@ -362,7 +355,7 @@ processOutputsPerFire <- function(BatchID, Iteration, FireID, UniqueFireID, burn
 processOutputs <- function(batchOutputs, rawOutputGridPaths) {
   # Don't save outputs from fires below minimum size
   batchOutputs <- batchOutputs %>%
-    filter(ResampleStatus == "Kept" | ResampleStatus == "Extra")
+    filter(ResampleStatus %in% c("Kept", "Extra"))
     
   # Generate outputs and collect raw tabular outputs
   batchTabularData <- pmap_dfr(batchOutputs, processOutputsPerFire, burnGrids = rawOutputGridPaths)
