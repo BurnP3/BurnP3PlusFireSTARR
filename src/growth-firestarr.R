@@ -602,10 +602,23 @@ dir.create(dirname(fuelsRasterFile), showWarnings = F, recursive = T)
 
 # FireSTARR requires raster width and heigh to be divisible by 16 and sets border pixels to be Non-fuel
 # - To handle this, we need to pad rasters by at least one pixel and enough to be divisble by 16
-# - Floor and ceiling are used to handle cases where an odd number of pixels need to be added
-# - Also note that adding a positive integer to xmin / ymin unintuitively decreases these values (ie makes the extent larger)
 pad_cols <- 16 - ((ncol(fuelsRaster) + 1) %% 16) + 1
 pad_rows <- 16 - ((nrow(fuelsRaster) + 1) %% 16) + 1
+
+# For "small" fuels rasters, FireSTARR appears to fail with an "Invalid start and end columns" error for non-square fuel maps
+# - As a workaround, ensure padding results in a square output for small rasters
+# - Note that this does not affect the size of temporary files, so this is very cheap
+if (ncol(fuelsRaster) < 512 | nrow(fuelsRaster) < 512) {
+  if (ncol(fuelsRaster) < nrow(fuelsRaster)) {
+    pad_cols <- (pad_rows + nrow(fuelsRaster)) - ncol(fuelsRaster)
+  } else {
+    pad_rows <- (pad_cols + ncol(fuelsRaster)) - nrow(fuelsRaster)
+  }
+}
+
+# Determine the final extent based on the number of rows and columns to pad
+# - Floor and ceiling are used to handle cases where an odd number of pixels need to be added
+# - Also note that adding a positive integer to xmin / ymin unintuitively decreases these values (ie makes the extent larger)
 padded_extent <- ext(fuelsRaster) + 
   c(xmin =  abs(  floor(pad_cols / 2) * xres(fuelsRaster)),
     xmax =  abs(ceiling(pad_cols / 2) * xres(fuelsRaster)),
